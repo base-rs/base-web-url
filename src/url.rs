@@ -1,6 +1,7 @@
 // Released under the MIT License.
 // Copyright, 2026, by Samuel Williams.
 
+use crate::url_reference::Redacted;
 use crate::{Authority, UrlError, UrlPath, UrlReference};
 use std::fmt;
 use std::str::FromStr;
@@ -146,6 +147,12 @@ impl Url {
         Self::from_reference(self.reference.resolve(reference))
     }
 
+    /// The same URL in the normal form of RFC 3986 section 6, as for [`UrlReference::normalize`].
+    #[must_use]
+    pub fn normalize(&self) -> Url {
+        Self::from_reference(self.reference.normalize())
+    }
+
     /// This URL relative to `base`, keeping its query and fragment, as for [`UrlReference::relative_to`].
     #[must_use]
     pub fn relative_to(&self, base: impl AsRef<UrlReference>) -> UrlReference {
@@ -224,8 +231,12 @@ impl fmt::Display for Url {
 }
 
 impl fmt::Debug for Url {
+    /// Shows the URL as written, such as `Url(https://user:***@example.com/)`, with any password replaced by `***`, so that debugging output and logs do not reveal it.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_tuple("Url").field(&self.text).finish()
+        formatter
+            .debug_tuple("Url")
+            .field(&format_args!("{}", Redacted(&self.reference)))
+            .finish()
     }
 }
 

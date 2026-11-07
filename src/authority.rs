@@ -2,7 +2,9 @@
 // Copyright, 2026, by Samuel Williams.
 
 use crate::UrlError;
+use crate::percent_encoding::normalize_encoding;
 use crate::syntax::{self, is_registered_name_byte, is_userinfo_byte};
+use std::borrow::Cow;
 use std::fmt;
 use std::net::Ipv6Addr;
 use std::ops::Range;
@@ -68,8 +70,46 @@ impl Authority {
     }
 
     /// The host as written, still percent-encoded, with brackets around an IP literal, such as `example.com` or `[2001:db8::1]`. It may be empty, as in `file:///etc/hosts`.
+    ///
+    /// # Security
+    ///
+    /// One host has many spellings: `EXAMPLE.com` and `ex%61mple.com` are `example.com`, and `[::FFFF:7F00:1]` is `[::ffff:127.0.0.1]`. Compare hosts only after [`Self::normalize`]. Even then, a client can read a host differently from RFC 3986: HTTP clients following the WHATWG URL Standard treat `127.1`, `0x7f.0.0.1`, and `2130706433` as `127.0.0.1`, and DNS treats `example.com.` as `example.com`. To keep requests away from internal addresses, check the addresses a host resolves to when connecting, not its name.
     pub fn host(&self) -> &str {
         &self.text[self.host.clone()]
+    }
+
+    /// The same authority in the normal form of RFC 3986 section 6.2.2: the host in lowercase, and an IPv6 address in its canonical text form, as RFC 5952 recommends; escapes of unreserved characters decoded and other escapes in uppercase; and an empty port removed. User information keeps its case, since it is case-sensitive.
+    #[must_use]
+    pub fn normalize(&self) -> Authority {
+        let mut text = String::with_capacity(self.text.len());
+        if let Some(userinfo) = self.userinfo() {
+            text.push_str(&normalize_encoding(userinfo, false));
+            text.push('@');
+        }
+        let host = self.host();
+        match host
+            .strip_prefix('[')
+            .and_then(|literal| literal.strip_suffix(']'))
+        {
+            Some(literal) => match literal.parse::<Ipv6Addr>() {
+                Ok(address) => text.push_str(&format!("[{address}]")),
+                Err(_) => text.push_str(&host.to_ascii_lowercase()),
+            },
+            None => text.push_str(&normalize_encoding(host, true)),
+        }
+        if let Some(port) = self.port {
+            text.push_str(&format!(":{port}"));
+        }
+        Self::parse(&text).expect("a normalized authority is valid")
+    }
+
+    /// The same authority without its port.
+    pub(crate) fn without_port(&self) -> Authority {
+        Self {
+            text: self.text[..self.host.end].to_owned(),
+            host: self.host.clone(),
+            port: None,
+        }
     }
 
     /// The port, if one is given.
@@ -113,11 +153,25 @@ impl fmt::Display for Authority {
     }
 }
 
+impl Authority {
+    /// The authority with any password in its user information replaced by `***`, for debugging output.
+    pub(crate) fn redacted(&self) -> Cow<'_, str> {
+        match self
+            .userinfo()
+            .and_then(|userinfo| userinfo.split_once(':'))
+        {
+            Some((user, _)) => Cow::Owned(format!("{user}:***@{}", &self.text[self.host.start..])),
+            None => Cow::Borrowed(&self.text),
+        }
+    }
+}
+
 impl fmt::Debug for Authority {
+    /// Shows the authority as written, such as `Authority(user:***@example.com)`, with any password replaced by `***`, so that debugging output and logs do not reveal it.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_tuple("Authority")
-            .field(&self.text)
+            .field(&format_args!("{}", self.redacted()))
             .finish()
     }
 }

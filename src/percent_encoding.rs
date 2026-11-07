@@ -81,3 +81,36 @@ pub(crate) fn decode_bytes(text: &str) -> Result<Cow<'_, [u8]>, UrlError> {
     }
     Ok(Cow::Owned(decoded))
 }
+
+/// Normalize the percent-encoding of text with well-formed escapes, as RFC 3986 section 6.2.2 describes: decode escapes of unreserved characters and use uppercase hexadecimal digits in the others. With `lowercase`, as for case-insensitive hosts, letters are also converted to lowercase, but not the digits of retained escapes.
+pub(crate) fn normalize_encoding(text: &str, lowercase: bool) -> String {
+    let bytes = text.as_bytes();
+    let mut normalized = String::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = if bytes[index] == b'%' {
+            // Callers pass validated text, so each `%` begins a complete escape.
+            let (high, low) = (bytes[index + 1], bytes[index + 2]);
+            index += 3;
+            let decoded = hex_value(high) << 4 | hex_value(low);
+            if !is_unreserved(decoded) {
+                normalized.extend([
+                    '%',
+                    char::from(high.to_ascii_uppercase()),
+                    char::from(low.to_ascii_uppercase()),
+                ]);
+                continue;
+            }
+            decoded
+        } else {
+            index += 1;
+            bytes[index - 1]
+        };
+        normalized.push(char::from(if lowercase {
+            byte.to_ascii_lowercase()
+        } else {
+            byte
+        }));
+    }
+    normalized
+}
