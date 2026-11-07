@@ -1,0 +1,21 @@
+[package]
+name = "base-web-url"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.87"
+license = "MIT"
+description = "URL references, paths, and percent-encoding following RFC 3986"
+repository = "https://github.com/base-rs/base-web-url"
+readme = "readme.md"
+keywords = ["url", "uri", "rfc3986", "percent-encoding", "web"]
+categories = ["web-programming", "parser-implementations", "encoding"]
+include = ["src/**", "context/**", "Cargo.toml", "readme.md", "license.md", "releases.md"]
+
+[workspace]
+members = ["bake"]
+resolver = "3"
+
+[workspace.metadata.bake.release]
+reviewers = ["base-rs/maintainers"]
+
+[dependencies]
