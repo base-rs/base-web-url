@@ -1,8 +1,8 @@
 // Released under the MIT License.
 // Copyright, 2026, by Samuel Williams.
 
-use crate::percent_encoding::{decode_bytes, encode_bytes};
-use crate::syntax::{self, hex_value, is_path_byte, is_segment_byte, is_unreserved};
+use crate::percent_encoding::{decode_bytes, encode_bytes, normalize_encoding};
+use crate::syntax::{self, is_path_byte, is_segment_byte};
 use crate::{LocalPathError, UrlError, decode_component};
 use std::borrow::{Borrow, Cow};
 use std::ffi::{OsStr, OsString};
@@ -321,6 +321,7 @@ impl UrlPath {
     ///
     /// An absolute `other` replaces this path, and an empty one returns this path unchanged; otherwise dot segments are removed from the joined path, so `..` in `other` can leave this path. Use [`Self::join_component`] to append an untrusted value.
     #[must_use]
+    // SECURITY: Joining does not confine the result to this path: `..` and absolute paths in `other` are URL syntax and navigate, as the documentation states. That is the meaning of URL paths rather than a weakness; untrusted values are appended with `join_component`, which encodes them as data, and files are opened through `to_local_path`, which confines them.
     pub fn join(&self, other: &UrlPath) -> UrlPath {
         if other.is_empty() {
             return self.clone();
@@ -360,30 +361,9 @@ impl UrlPath {
     /// Normalize the percent-encoding: decode escapes of unreserved characters, such as `%7E` to `~` and `%2E` to `.`, and use uppercase hexadecimal digits in the others, as RFC 3986 section 6.2.2 describes. Segments are unchanged, though a decoded dot can make a segment a dot segment.
     #[must_use]
     pub fn normalize(&self) -> UrlPath {
-        let bytes = self.encoded.as_bytes();
-        let mut encoded = String::with_capacity(bytes.len());
-        let mut index = 0;
-        while index < bytes.len() {
-            if bytes[index] == b'%' {
-                // Every constructor checks that each `%` begins a complete escape.
-                let (high, low) = (bytes[index + 1], bytes[index + 2]);
-                let byte = hex_value(high) << 4 | hex_value(low);
-                if is_unreserved(byte) {
-                    encoded.push(char::from(byte));
-                } else {
-                    encoded.extend([
-                        '%',
-                        char::from(high.to_ascii_uppercase()),
-                        char::from(low.to_ascii_uppercase()),
-                    ]);
-                }
-                index += 3;
-            } else {
-                encoded.push(char::from(bytes[index]));
-                index += 1;
-            }
+        Self {
+            encoded: normalize_encoding(&self.encoded, false),
         }
-        Self { encoded }
     }
 
     /// This absolute path as a reference relative to `base`, such as `../app.js` for `/assets/app.js` from `/docs/index.html`.
@@ -689,10 +669,11 @@ impl fmt::Display for UrlPath {
 }
 
 impl fmt::Debug for UrlPath {
+    /// Shows the encoded path, such as `UrlPath(/docs/a%20b)`.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_tuple("UrlPath")
-            .field(&self.encoded)
+            .field(&format_args!("{}", self.encoded))
             .finish()
     }
 }

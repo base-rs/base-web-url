@@ -1,6 +1,7 @@
 // Released under the MIT License.
 // Copyright, 2026, by Samuel Williams.
 
+use crate::percent_encoding::normalize_encoding;
 use crate::syntax::{self, is_query_byte};
 use crate::{Authority, UrlError, UrlPath};
 use std::fmt;
@@ -199,6 +200,39 @@ impl UrlReference {
         Self::from_parts(scheme, self.authority.clone(), path, query, fragment)
     }
 
+    /// The same reference in the normal form of RFC 3986 section 6, so that equivalent spellings compare equal.
+    ///
+    /// The scheme is already lowercase; the authority is normalized as for [`Authority::normalize`]; escapes of unreserved characters are decoded and other escapes use uppercase digits, in every component; and dot segments are removed from the path. For `http`, `https`, `ws`, and `wss`, the default port is removed and an empty path becomes `/`. Normalization never decodes reserved characters, such as `%2F`, which would change meaning.
+    #[must_use]
+    pub fn normalize(&self) -> UrlReference {
+        let mut authority = self.authority.as_ref().map(Authority::normalize);
+        let path = self.path.normalize();
+        let mut path = if self.scheme.is_some() {
+            path.remove_dot_segments_rfc()
+        } else {
+            path.remove_dot_segments()
+        };
+        if let (Some(port), Some(current)) =
+            (self.scheme.as_deref().and_then(default_port), &authority)
+        {
+            if current.port() == Some(port) {
+                authority = Some(current.without_port());
+            }
+            if path.is_empty() {
+                path = root();
+            }
+        }
+        let normalize =
+            |text: &Option<String>| text.as_deref().map(|text| normalize_encoding(text, false));
+        Self::from_parts(
+            self.scheme.clone(),
+            authority,
+            path,
+            normalize(&self.query),
+            normalize(&self.fragment),
+        )
+    }
+
     /// This reference relative to `base`, such as `../api/?page=2` for `https://example.com/api/?page=2` from `https://example.com/docs/index.html`, keeping its query and fragment; see [`UrlPath::relative_to`].
     ///
     /// Resolving the result against `base` gives this reference again, with dot segments removed from its path. A reference with a different scheme or authority from `base`, or a path that is not absolute, is returned unchanged.
@@ -324,14 +358,18 @@ impl FromStr for UrlReference {
     }
 }
 
-impl fmt::Display for UrlReference {
-    /// Writes the reference as RFC 3986 section 5.3 recomposes it.
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl UrlReference {
+    /// Write the reference as RFC 3986 section 5.3 recomposes it, with any password replaced by `***` when `redact` is set.
+    fn write(&self, formatter: &mut fmt::Formatter<'_>, redact: bool) -> fmt::Result {
         if let Some(scheme) = &self.scheme {
             write!(formatter, "{scheme}:")?;
         }
         if let Some(authority) = &self.authority {
-            write!(formatter, "//{authority}")?;
+            if redact {
+                write!(formatter, "//{}", authority.redacted())?;
+            } else {
+                write!(formatter, "//{authority}")?;
+            }
         }
         formatter.write_str(self.path.as_str())?;
         if let Some(query) = &self.query {
@@ -344,12 +382,38 @@ impl fmt::Display for UrlReference {
     }
 }
 
+/// A reference written for debugging output, with any password replaced by `***`.
+pub(crate) struct Redacted<'a>(pub &'a UrlReference);
+
+impl fmt::Display for Redacted<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.write(formatter, true)
+    }
+}
+
+impl fmt::Display for UrlReference {
+    /// Writes the reference as RFC 3986 section 5.3 recomposes it.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.write(formatter, false)
+    }
+}
+
 impl fmt::Debug for UrlReference {
+    /// Shows the reference as written, such as `UrlReference(https://user:***@example.com/)`, with any password replaced by `***`, so that debugging output and logs do not reveal it.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_tuple("UrlReference")
-            .field(&format_args!("{self}"))
+            .field(&format_args!("{}", Redacted(self)))
             .finish()
+    }
+}
+
+/// The default port of the schemes whose normalization RFC 3986 section 6.2.3 describes for the web.
+fn default_port(scheme: &str) -> Option<u16> {
+    match scheme {
+        "http" | "ws" => Some(80),
+        "https" | "wss" => Some(443),
+        _ => None,
     }
 }
 

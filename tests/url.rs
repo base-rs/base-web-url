@@ -30,7 +30,7 @@ fn urls_have_a_scheme() {
     );
     assert_eq!(
         format!("{parsed:?}"),
-        "Url(\"https://example.com/docs/?page=2#top\")"
+        "Url(https://example.com/docs/?page=2#top)"
     );
     assert_eq!(Url::parse("/docs/"), Err(UrlError::Relative));
     assert_eq!(
@@ -261,5 +261,64 @@ fn urls_relative_to_a_page_keep_their_query() {
             .to_string(),
         "https://other.example/x",
         "another authority cannot be relative"
+    );
+}
+
+#[test]
+fn normalizes_equivalent_urls_to_one_spelling() {
+    let cases = [
+        (
+            "HTTPS://EXAMPLE.com:443/a/./b/../%7Ec?%7e#%7E",
+            "https://example.com/a/~c?~#~",
+        ),
+        ("http://example.com:80", "http://example.com/"),
+        ("http://example.com:8080", "http://example.com:8080/"),
+        ("ws://example.com:80/x", "ws://example.com/x"),
+        ("wss://example.com:443/x", "wss://example.com/x"),
+        ("https://example.com:80/x", "https://example.com:80/x"),
+        ("ftp://EXAMPLE.com:21", "ftp://example.com:21"),
+        (
+            "https://ex%61mple.com/%2e%2E/%2F",
+            "https://example.com/%2F",
+        ),
+        ("foo:a/%2E/../b", "foo:/b"),
+        ("mailto:Ada@Example.com", "mailto:Ada@Example.com"),
+    ];
+    for (original, normalized) in cases {
+        assert_eq!(url(original).normalize().as_str(), normalized, "{original}");
+        assert_eq!(
+            url(normalized).normalize().as_str(),
+            normalized,
+            "{normalized} is already normal"
+        );
+    }
+    assert_eq!(
+        UrlReference::parse("a/./%7e/../b:c?x")
+            .unwrap()
+            .normalize()
+            .to_string(),
+        "a/b:c?x"
+    );
+    assert_eq!(
+        UrlReference::parse("x/../a:b")
+            .unwrap()
+            .normalize()
+            .to_string(),
+        "./a:b"
+    );
+}
+
+#[test]
+fn debugging_output_hides_passwords() {
+    let secret = url("https://user:secret@example.com/a");
+    assert_eq!(format!("{secret:?}"), "Url(https://user:***@example.com/a)");
+    assert_eq!(
+        format!("{:?}", secret.as_reference()),
+        "UrlReference(https://user:***@example.com/a)"
+    );
+    assert_eq!(
+        secret.as_str(),
+        "https://user:secret@example.com/a",
+        "the URL itself is exact"
     );
 }

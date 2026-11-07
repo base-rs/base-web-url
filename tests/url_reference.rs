@@ -287,6 +287,14 @@ fn formatting_errors_propagate() {
         );
     }
     assert!(write!(Failing { remaining: length }, "{full}").is_ok());
+    let secret = reference("https://user:secret@example.com/a");
+    let debug = format!("{secret:?}").len();
+    for remaining in 0..debug {
+        assert!(
+            write!(Failing { remaining }, "{secret:?}").is_err(),
+            "{remaining}"
+        );
+    }
 }
 
 #[test]

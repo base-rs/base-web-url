@@ -23,7 +23,7 @@ fn parses_userinfo_hosts_and_ports() {
     );
     assert_eq!(
         format!("{parsed:?}"),
-        "Authority(\"user:p%40ss@example.com:8080\")"
+        "Authority(user:***@example.com:8080)"
     );
     let cases = [
         ("example.com", None, "example.com", None),
@@ -141,4 +141,51 @@ fn errors_describe_the_problem() {
     );
     let error: Box<dyn std::error::Error> = Box::new(UrlError::Syntax);
     assert!(error.source().is_none());
+}
+
+#[test]
+fn normalizes_authorities() {
+    let cases = [
+        ("EXAMPLE.com", "example.com"),
+        ("ex%61mple.COM:8080", "example.com:8080"),
+        ("%7e%2fx", "~%2Fx"),
+        ("User%7e:Pa%73s@Example.com:", "User~:Pass@example.com"),
+        ("[2001:DB8:0:0:0:0:0:1]:443", "[2001:db8::1]:443"),
+        ("[::FFFF:7F00:1]", "[::ffff:127.0.0.1]"),
+        ("[V1.FE80::A]", "[v1.fe80::a]"),
+        ("example.com:080", "example.com:80"),
+        ("@h", "@h"),
+    ];
+    for (original, normalized) in cases {
+        assert_eq!(
+            authority(original).normalize(),
+            authority(normalized),
+            "{original}"
+        );
+    }
+    assert_eq!(
+        authority("a.example").normalize().normalize(),
+        authority("a.example")
+    );
+}
+
+#[test]
+fn debugging_output_hides_passwords() {
+    assert_eq!(
+        format!("{:?}", authority("user:secret@example.com")),
+        "Authority(user:***@example.com)"
+    );
+    assert_eq!(
+        format!("{:?}", authority("user@example.com")),
+        "Authority(user@example.com)"
+    );
+    assert_eq!(
+        format!("{:?}", authority(":secret@example.com")),
+        "Authority(:***@example.com)"
+    );
+    assert_eq!(
+        authority("user:secret@example.com").to_string(),
+        "user:secret@example.com",
+        "Display keeps the authority exact"
+    );
 }

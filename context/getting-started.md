@@ -80,3 +80,20 @@ assert_eq!(status.as_str(), "https://api.example.com/status");
 ```
 
 A component is always data, so an untrusted value such as `../admin` cannot leave the path: it is encoded as one segment, and `.` and `..` are rejected. A path passed to `join` is URL syntax and can navigate. Both remove the query and fragment, which belonged to the original resource. Use `resolve` when you mean what a link would mean, and `join` when you are appending to a path.
+
+## Comparing URLs safely
+
+Components are kept as written, so one resource can have several spellings, and equality compares them exactly. `normalize` gives the normal form of RFC 3986 section 6, after which equivalent spellings are equal:
+
+```rust
+use base_web_url::Url;
+
+let a = Url::parse("HTTPS://Ex%61mple.COM:443/docs/./guide/../%7Eada").unwrap();
+let b = Url::parse("https://example.com/docs/~ada").unwrap();
+assert_ne!(a, b);
+assert_eq!(a.normalize(), b);
+```
+
+Normalize before comparing hosts, such as for an allowlist, and never compare them as written. Even normalized, a host is not a network address: clients that follow the WHATWG URL Standard read `127.1` and `0x7f.0.0.1` as `127.0.0.1`, and DNS treats `example.com.` as `example.com`. To keep requests from reaching internal services, check the addresses a host resolves to when connecting, not its name.
+
+`Debug` output replaces a password in user information with `***`, so URLs can be logged while debugging without revealing it. `Display` and `as_str` are exact, so treat their text as a secret when it contains user information.

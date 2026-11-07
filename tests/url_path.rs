@@ -40,7 +40,7 @@ fn keeps_encoded_segments_and_decodes_components() {
         (parsed.to_string(), parsed.as_ref()),
         ("/a/b%2Fc/caf%C3%A9".to_owned(), "/a/b%2Fc/caf%C3%A9")
     );
-    assert_eq!(format!("{parsed:?}"), "UrlPath(\"/a/b%2Fc/caf%C3%A9\")");
+    assert_eq!(format!("{parsed:?}"), "UrlPath(/a/b%2Fc/caf%C3%A9)");
     assert_eq!("/x".parse::<UrlPath>(), Ok(path("/x")));
 }
 
