@@ -24,7 +24,9 @@ use std::str::FromStr;
 /// # Ok::<(), base_web_url::UrlError>(())
 /// ```
 ///
-/// A path ending with `/` names a directory, and any other names a file within its directory; this decides how [`Self::resolve`] treats a base, and what [`Self::directory`] and [`Self::parent`] return. `.` and `..` segments navigate when a path is resolved, joined, or asked for its parent; a percent-encoded dot, such as `%2E%2E`, is data, except to [`Self::simplify`] and [`Self::to_local_path`].
+/// A path ending with `/` names a directory, and any other names a file within its directory; this decides how [`Self::resolve`] treats a base, and what [`Self::directory`] and [`Self::parent`] return.
+///
+/// `.` and `..` segments navigate. [`Self::resolve`] and [`Self::join`] follow RFC 3986, where a percent-encoded dot such as `%2E%2E` is data; the operations about what a path names, [`Self::file_name`], [`Self::directory`], [`Self::parent`], [`Self::simplify`], and [`Self::to_local_path`], treat it as a dot, as servers that decode it do. [`Self::normalize`] decodes encoded dots, after which the two agree.
 ///
 /// Paths compare by their exact encoded spelling; use [`Self::normalize`] and [`Self::simplify`] first to compare equivalent spellings.
 #[derive(Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -205,7 +207,9 @@ impl UrlPath {
 
     /// The decoded final segment, such as `My Report.pdf` in `/docs/My%20Report.pdf`.
     ///
-    /// `None` for the empty path, a directory path, and a final `.` or `..`, which name directories. Unlike [`std::path::Path::file_name`], a trailing `/` is significant: `/docs/` names the directory itself, which has no file name. The item is [`UrlError::Utf8`] when the segment does not decode to UTF-8.
+    /// `None` for the empty path, a directory path, and a final `.` or `..`, which name directories. A percent-encoded dot counts as a dot here, so a final `%2E%2E` has no file name either. Unlike [`std::path::Path::file_name`], a trailing `/` is significant: `/docs/` names the directory itself, which has no file name. The item is [`UrlError::Utf8`] when the segment does not decode to UTF-8.
+    ///
+    /// The decoded name can contain `/` or NUL, from `%2F` or `%00`, so never append it to a local path: map the whole path with [`Self::to_local_path`] instead.
     pub fn file_name(&self) -> Option<Result<Cow<'_, str>, UrlError>> {
         let segment = self
             .encoded
@@ -240,10 +244,10 @@ impl UrlPath {
 
     /// The directory containing the resource this path names: the path itself when it names a directory, and otherwise the path without its file name, such as `/docs/` for `/docs/report.pdf`.
     ///
-    /// This is the directory that a relative reference resolved against this path is relative to. Dot segments are resolved first, and a relative path without a directory gives `./`.
+    /// This is the directory that a relative reference without a leading `/` or `..` resolves within. Dot segments are resolved first, including percent-encoded ones, as for [`Self::parent`], and a relative path without a directory gives `./`.
     #[must_use]
     pub fn directory(&self) -> UrlPath {
-        let path = self.remove_dot_segments();
+        let path = self.remove_encoded_dot_segments();
         if path.is_directory() {
             return path;
         }
@@ -259,19 +263,20 @@ impl UrlPath {
 
     /// The directory one level above the resource this path names, in directory form: `/docs/` for both `/docs/report.pdf` and `/docs/guide/`.
     ///
-    /// Dot segments are resolved first, so the parent is never deeper than the path: the parent of `/a/b/..` is `/`. An empty segment counts as a level, as it does when resolving `..`. `None` at the root `/`, and for a relative path whose remaining segments are all `..`, such as `./` or `../`, since what lies above depends on the base it is resolved against.
+    /// Dot segments are resolved first, including percent-encoded ones such as `%2E%2E`, as a server that decodes them would, so the parent is never deeper than the path: the parent of both `/a/b/..` and `/a/b/%2E%2E` is `/`. An empty segment counts as a level, as it does when resolving `..`. `None` at the root `/`, and for a relative path whose remaining segments are all `..`, such as `./` or `../`, since what lies above depends on the base it is resolved against.
+    ///
+    /// Resolving a reference without a leading `/` or `..` against the parent stays within it. These are URL semantics, not access control: decide access on the result of [`Self::to_local_path`], or on [`Self::normalize`] followed by [`Self::simplify`], which collapse empty segments as the filesystem does.
     ///
     /// Use [`std::path::Path::parent`] on a local path from [`Self::to_local_path`] to work with directories on disk instead.
     pub fn parent(&self) -> Option<UrlPath> {
-        let path = self.remove_dot_segments();
+        let path = self.remove_encoded_dot_segments();
         let named = path.encoded.strip_suffix('/').unwrap_or(&path.encoded);
         let last = named
             .rsplit('/')
             .next()
             .expect("splitting yields a segment");
-        if (path.is_absolute() && named.is_empty())
-            || (!path.is_absolute() && matches!(last, "" | "." | ".."))
-        {
+        // Nothing named remains above the root, or above a relative path whose segments are all `..`, written `./` or `../`.
+        if named.is_empty() || (!path.is_absolute() && matches!(last, "." | "..")) {
             return None;
         }
         Some(match named.rfind('/') {
@@ -284,7 +289,7 @@ impl UrlPath {
         })
     }
 
-    /// This path followed by each of its parents in turn, as for [`Self::parent`], ending at the root or at the top of a relative path.
+    /// This path, as it is, followed by each of its parents in turn, as for [`Self::parent`], ending at the root or at the top of a relative path. The parents have dot segments resolved; the path itself is unchanged.
     pub fn ancestors(&self) -> impl Iterator<Item = UrlPath> {
         std::iter::successors(Some(self.clone()), UrlPath::parent)
     }
@@ -349,7 +354,7 @@ impl UrlPath {
     /// This is lossy: `/a//b` and `/a/b` can name different resources. Use it when the application treats them alike, such as when comparing paths that map to files.
     #[must_use]
     pub fn simplify(&self) -> UrlPath {
-        self.resolve_dot_segments(true)
+        self.resolve_dot_segments(true, true)
     }
 
     /// Normalize the percent-encoding: decode escapes of unreserved characters, such as `%7E` to `~` and `%2E` to `.`, and use uppercase hexadecimal digits in the others, as RFC 3986 section 6.2.2 describes. Segments are unchanged, though a decoded dot can make a segment a dot segment.
@@ -436,6 +441,8 @@ impl UrlPath {
     ///
     /// # Security
     ///
+    /// Decide access on the returned path, or on this URL path after [`Self::normalize`] and [`Self::simplify`], which maps to the same file whenever this call succeeds, never on the URL path as [`Self::resolve`] or [`Self::parent`] see it: those keep empty segments as levels, so `/public//../private/x` resolves to `/public/private/x` but maps to `private/x` beneath `root`.
+    ///
     /// Containment is lexical. Symbolic links beneath `root` are followed when the path is opened, and the filesystem can change between this call and that use, so the tree beneath `root` must not contain links that an untrusted party controls. One file can also have several names, so do not base access decisions on the name alone: on Windows, trailing dots and spaces, letter case, short `8.3` names, and device names such as `CON`; on macOS, letter case and Unicode normalization.
     // SECURITY: Containment is lexical: links and races beneath `root`, and platform name aliasing, are the caller's to manage, as the documentation above states.
     pub fn to_local_path(&self, root: impl AsRef<Path>) -> Result<PathBuf, LocalPathError> {
@@ -471,7 +478,7 @@ impl UrlPath {
 
     /// Remove literal `.` and `..` segments. For an absolute path this is the algorithm of RFC 3986 section 5.2.4; a relative path keeps the `..` segments it cannot resolve.
     pub(crate) fn remove_dot_segments(&self) -> UrlPath {
-        self.resolve_dot_segments(false)
+        self.resolve_dot_segments(false, false)
     }
 
     /// Remove dot segments exactly as the algorithm of RFC 3986 section 5.2.4 does, for paths of references with a scheme, including those without a leading `/`.
@@ -500,8 +507,13 @@ impl UrlPath {
         Self { encoded: output }
     }
 
-    /// Resolve dot segments, with `simplify` also treating percent-encoded dots as dot segments and collapsing empty segments.
-    fn resolve_dot_segments(&self, simplify: bool) -> UrlPath {
+    /// Remove `.` and `..` segments, including percent-encoded spellings, keeping empty segments: the structure a server that decodes dots sees, used for a path's meaning rather than for RFC 3986 resolution.
+    fn remove_encoded_dot_segments(&self) -> UrlPath {
+        self.resolve_dot_segments(true, false)
+    }
+
+    /// Resolve dot segments, with `encoded_dots` also treating percent-encoded dots as dot segments, and `collapse` removing empty segments.
+    fn resolve_dot_segments(&self, encoded_dots: bool, collapse: bool) -> UrlPath {
         if self.encoded.is_empty() {
             return Self::new();
         }
@@ -515,7 +527,7 @@ impl UrlPath {
         let last = parts.len() - 1;
         let mut segments: Vec<&str> = Vec::with_capacity(parts.len());
         for (index, &segment) in parts.iter().enumerate() {
-            match dot_segment(segment, simplify) {
+            match dot_segment(segment, encoded_dots) {
                 Some(dot) => {
                     if dot == DotSegment::Parent {
                         match segments.last() {
@@ -532,7 +544,7 @@ impl UrlPath {
                         segments.push("");
                     }
                 }
-                None if simplify && segment.is_empty() && index != last => {}
+                None if collapse && segment.is_empty() && index != last => {}
                 None => segments.push(segment),
             }
         }
@@ -583,12 +595,18 @@ fn map_cow<'a>(name: Cow<'a, str>, part: impl Fn(&str) -> &str) -> Cow<'a, str> 
     }
 }
 
-/// Whether a local path ends with a separator, naming a directory.
+/// Whether a local path names a directory by its form: it ends with a separator, or with a `.` or `..` component, which `Path::components` would otherwise drop or keep as navigation.
 fn names_directory(path: &Path) -> bool {
-    path.as_os_str()
-        .as_encoded_bytes()
+    let bytes = path.as_os_str().as_encoded_bytes();
+    let last = bytes
+        .rsplit(|&byte| std::path::is_separator(char::from(byte)))
+        .next()
+        .unwrap_or_default();
+    bytes
         .last()
         .is_some_and(|&byte| std::path::is_separator(char::from(byte)))
+        || last == b"."
+        || last == b".."
 }
 
 /// One file name, encoded as one URL segment.

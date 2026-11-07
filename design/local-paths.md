@@ -6,6 +6,8 @@
 
 `UrlPath::from_local_path` must encode each file name of a relative local path as exactly one segment, keep a trailing separator as a trailing `/`, and reject a path with a root or prefix and a file name containing NUL, or, on platforms other than Unix, one that is not Unicode. `UrlPath::from_local_path_under` must give the absolute URL path of a local path beneath a root, rejecting a path that does not begin with the root or whose `..` components would leave it. For a local path without `..` components, mapping it to a URL path and back beneath the same root must give the same local path.
 
+Whenever `to_local_path` succeeds, the URL path after `normalize` and `simplify` must map to the same local path, so that access decisions made on that form see the file that is opened; the documentation must direct access decisions to the returned path or that form, never to the structure `resolve` or `parent` see, which keeps empty segments as levels. `from_local_path` and `from_local_path_under` must keep directory form for a local path ending with a separator, `.`, or `..`.
+
 The guarantee is lexical containment only. The documentation must state that symbolic links are not resolved, that the filesystem can change between the check and its use, so the tree beneath the root must be trusted, and that one file can have several names on some platforms, so access decisions must not rest on the name alone.
 
 ## Rationale
@@ -18,4 +20,4 @@ The user considers mapping URL paths to local files, with correct escaping in bo
 
 ## Validation
 
-The tests in `tests/url_path.rs` check mappings beneath a root, including encoded names, repeated separators, and dot segments; rejection of traversal above the root, encoded separators, and NUL; exact round trips of names that are not UTF-8 on Unix; trailing separators; and that `from_local_path` and `from_local_path_under` round-trip through `to_local_path`.
+The tests in `tests/url_path.rs` check mappings beneath a root, including encoded names, repeated separators, and dot segments; rejection of traversal above the root, encoded separators, and NUL; exact round trips of names that are not UTF-8 on Unix; trailing separators; that `from_local_path` and `from_local_path_under` round-trip through `to_local_path`, and, as a property over generated paths, that `to_local_path` agrees with the normalized and simplified path whenever it succeeds.

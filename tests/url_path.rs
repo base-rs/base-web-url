@@ -194,7 +194,12 @@ fn parents_are_the_level_above_in_directory_form() {
         ("../..", None),
         ("", None),
         ("a/..//b", Some(".//")),
-        (".//", None),
+        (".//", Some("./")),
+        ("a//", Some("a/")),
+        // Percent-encoded dots are dots here, as a server that decodes them sees them.
+        ("/a/b/%2E%2E", Some("/")),
+        ("/a/b/%2e", Some("/a/")),
+        ("/a/%2E%2E/b", Some("/")),
     ];
     for (child, parent) in cases {
         assert_eq!(path(child).parent(), parent.map(path), "{child:?}");
@@ -219,6 +224,16 @@ fn ancestors_end_at_the_root_or_the_top_of_a_relative_path() {
     assert_eq!(names("a/b"), ["a/b", "a/", "./"]);
     assert_eq!(names("../a"), ["../a", "../"]);
     assert_eq!(names("/"), ["/"]);
+    assert_eq!(
+        names("a//b"),
+        ["a//b", "a//", "a/", "./"],
+        "an empty segment is a level in relative paths too"
+    );
+    assert_eq!(
+        names("/a/b/.."),
+        ["/a/b/..", "/"],
+        "the path itself is unchanged"
+    );
 }
 
 #[test]
@@ -473,6 +488,13 @@ fn builds_url_paths_from_local_paths() {
         "a trailing separator names a directory"
     );
     assert_eq!(UrlPath::from_local_path("./"), Ok(path("./")));
+    for (local, url) in [(".", "./"), ("a/.", "a/"), ("a/..", "a/../"), ("..", "../")] {
+        assert_eq!(
+            UrlPath::from_local_path(local),
+            Ok(path(url)),
+            "{local:?} names a directory"
+        );
+    }
     assert_eq!(UrlPath::from_local_path(""), Ok(UrlPath::new()));
     assert_eq!(
         UrlPath::from_local_path("/srv/public"),
@@ -640,4 +662,41 @@ fn parents_terminate_and_never_deepen() {
             }
         }
     }
+}
+
+#[test]
+fn local_paths_agree_with_normalized_and_simplified_paths() {
+    // Access decisions made on `normalize().simplify()` see the file that `to_local_path` opens, whenever it opens one. Where `simplify` stops `..` at the root, `to_local_path` refuses instead.
+    let root = Path::new("/srv/public");
+    let mut paths = Paths(11);
+    let mut refused = 0;
+    for _ in 0..20_000 {
+        let original = path(&format!("/{}", paths.next()));
+        let simplified = original.normalize().simplify();
+        match original.to_local_path(root) {
+            Ok(local) => assert_eq!(simplified.to_local_path(root), Ok(local), "{original}"),
+            Err(error) => {
+                assert_eq!(error, LocalPathError::EscapesRoot, "{original}");
+                refused += 1;
+            }
+        }
+        assert!(
+            simplified.to_local_path(root).is_ok(),
+            "{simplified} has no dot segments left to escape with"
+        );
+    }
+    assert!(refused > 0, "the generator reaches the root");
+    let tricky = path("/public//../private/x");
+    assert_eq!(tricky.resolve(&path("")), tricky);
+    assert_eq!(
+        path("/").resolve(&tricky),
+        path("/public/private/x"),
+        "RFC 3986 resolution keeps the empty segment as a level"
+    );
+    assert_eq!(
+        tricky.to_local_path(root),
+        Ok(root.join("private/x")),
+        "the filesystem does not"
+    );
+    assert_eq!(tricky.normalize().simplify(), path("/private/x"));
 }

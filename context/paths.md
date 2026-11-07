@@ -49,6 +49,8 @@ assert_eq!(report.extension().unwrap().unwrap(), "gz");
 assert!(UrlPath::parse("/docs/").unwrap().file_name().is_none(), "a directory has no file name");
 ```
 
+A decoded file name can contain `/` or NUL, from `%2F` or `%00`, so never append it to a local path yourself; map the whole path with `to_local_path`.
+
 ## Directories and parents
 
 "Parent" can mean different things, so there are two operations, each with one meaning:
@@ -65,8 +67,9 @@ assert!(UrlPath::parse("/docs/").unwrap().file_name().is_none(), "a directory ha
 | `a/b` | `a/` | `a/` |
 | `a` | `./` | `./` |
 | `../` | `../` | `None` |
+| `/a/b/%2E%2E` | `/a/` | `/` |
 
-Both resolve `.` and `..` segments first, so neither is ever deeper than the path itself. An empty segment, as in `/a//b`, counts as a level, as it does when resolving `..`. Both return directory form, so resolving a reference against them stays inside:
+Both resolve `.` and `..` segments first, including percent-encoded ones such as `%2E%2E`, as a server that decodes them would, so neither is ever deeper than the path itself. An empty segment, as in `/a//b`, counts as a level, as it does when resolving `..`. Both return directory form, so resolving a reference without a leading `/` or `..` against them stays inside:
 
 ```rust
 use base_web_url::UrlPath;
@@ -80,7 +83,7 @@ let ancestors: Vec<String> = report.ancestors().map(|path| path.to_string()).col
 assert_eq!(ancestors, ["/docs/guide/report.pdf", "/docs/guide/", "/docs/", "/"]);
 ```
 
-These are URL semantics. For directories on disk, map the path with `to_local_path` and use `std::path::Path::parent`, which follows the filesystem's rules instead.
+These are URL semantics, not access control. For directories on disk, map the path with `to_local_path` and use `std::path::Path::parent`, which follows the filesystem's rules instead.
 
 ## Resolving and joining
 
@@ -164,6 +167,21 @@ assert_eq!(url.as_str(), "/files/My%20Document%20%232.txt");
 
 let link = UrlPath::from_local_path("files/").unwrap();
 assert_eq!(link.as_str(), "files/");
+```
+
+### Access decisions
+
+The URL operations and the filesystem can see different structure. `resolve` and `parent` follow RFC 3986, which counts an empty segment as a level, while the filesystem treats `//` like `/`, and `resolve` treats `%2E%2E` as data, while `to_local_path` decodes it to `..`. So decide access on the path `to_local_path` returns, or on the URL path after `normalize` and `simplify`, which maps to the same file whenever `to_local_path` succeeds, and never on the path as `resolve` or `parent` see it:
+
+```rust
+use base_web_url::UrlPath;
+use std::path::Path;
+
+let root = Path::new("/srv");
+let request = UrlPath::parse("/public//../private/x").unwrap();
+assert_eq!(UrlPath::parse("/").unwrap().resolve(&request).as_str(), "/public/private/x");
+assert_eq!(request.normalize().simplify().as_str(), "/private/x");
+assert_eq!(request.to_local_path(root).unwrap(), root.join("private/x"));
 ```
 
 The containment check is lexical. It does not resolve symbolic links, and the filesystem can change between the check and opening the file, so the tree beneath the root must not contain links that an untrusted party controls. One file can also have several names, such as by letter case on macOS and Windows, so do not base access decisions on the name alone.
