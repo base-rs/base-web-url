@@ -2,19 +2,19 @@
 
 URLs, URL references, and URL paths for Rust, following RFC 3986, with percent-encoding and safe mapping to local files.
 
-A `Url` has a scheme, such as `https://example.com/docs/`; a `UrlReference` may also be relative, such as `../api?page=2`, and resolves against a page's URL as a browser does. A `UrlPath` keeps its percent-encoded segments, so a `/` inside a decoded value never becomes a separator, and maps to a file beneath a root directory without escaping it.
+A `Url` has a scheme, such as `https://example.com/docs/`; a `UrlReference` may also be relative, such as `../api?page=2`, and resolves against a page's URL following RFC 3986. A `UrlPath` keeps its percent-encoded segments, so a `/` inside a decoded value never becomes a separator, and maps to a file beneath a root directory without escaping it.
 
 ## Usage
 
 ```rust
-use base_web_url::{Url, UrlPath, UrlReference};
+use base_web_url::{Url, UrlReference};
 
 let page = Url::parse("https://example.com/docs/guide/index.html").unwrap();
 let link = page.resolve(UrlReference::parse("../My%20Report.pdf").unwrap());
 assert_eq!(link.as_str(), "https://example.com/docs/My%20Report.pdf");
 
 let api = Url::parse("https://api.example.com/v1").unwrap();
-assert_eq!(api.join(&UrlPath::from_components(["users", "a/b"])).as_str(), "https://api.example.com/v1/users/a%2Fb");
+assert_eq!(api.join_component("a/b").unwrap().as_str(), "https://api.example.com/v1/a%2Fb");
 ```
 
 See the guides:

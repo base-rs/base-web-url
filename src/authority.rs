@@ -24,31 +24,31 @@ impl Authority {
     ///
     /// # Errors
     ///
-    /// [`UrlError::Host`] for invalid user information or an invalid host, [`UrlError::Port`] for a port that is not a number from 0 to 65535, and [`UrlError::PercentEncoding`] for a malformed escape. An empty port, as in `example.com:`, is permitted and treated as absent.
+    /// [`UrlError::Authority`] for invalid user information or an invalid host, [`UrlError::Port`] for a port that is not a number from 0 to 65535, and [`UrlError::PercentEncoding`] for a malformed escape. An empty port, as in `example.com:`, is permitted and treated as absent.
     pub fn parse(text: &str) -> Result<Self, UrlError> {
         let host_start = match text.find('@') {
             Some(index) => {
-                syntax::validate(&text[..index], is_userinfo_byte, UrlError::Host)?;
+                syntax::validate(&text[..index], is_userinfo_byte, UrlError::Authority)?;
                 index + 1
             }
             None => 0,
         };
         let rest = &text[host_start..];
         let host_length = if rest.starts_with('[') {
-            let end = rest.find(']').ok_or(UrlError::Host)?;
+            let end = rest.find(']').ok_or(UrlError::Authority)?;
             if !is_ip_literal(&rest[1..end]) {
-                return Err(UrlError::Host);
+                return Err(UrlError::Authority);
             }
             end + 1
         } else {
             let end = rest.find(':').unwrap_or(rest.len());
-            syntax::validate(&rest[..end], is_registered_name_byte, UrlError::Host)?;
+            syntax::validate(&rest[..end], is_registered_name_byte, UrlError::Authority)?;
             end
         };
         let port = match &rest[host_length..] {
             "" | ":" => None,
             port => {
-                let digits = port.strip_prefix(':').ok_or(UrlError::Host)?;
+                let digits = port.strip_prefix(':').ok_or(UrlError::Authority)?;
                 if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
                     return Err(UrlError::Port);
                 }
@@ -119,5 +119,18 @@ impl fmt::Debug for Authority {
             .debug_tuple("Authority")
             .field(&self.text)
             .finish()
+    }
+}
+
+impl PartialOrd for Authority {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Authority {
+    /// Orders authorities by their text, from which the host and port are derived, so the order agrees with equality.
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.text.cmp(&other.text)
     }
 }

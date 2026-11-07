@@ -53,18 +53,18 @@ fn parses_userinfo_hosts_and_ports() {
 #[test]
 fn rejects_invalid_authorities() {
     let cases = [
-        ("exa mple.com", UrlError::Host),
-        ("user@host@example.com", UrlError::Host),
-        ("us er@example.com", UrlError::Host),
-        ("[2001:db8::1", UrlError::Host),
-        ("[2001:db8::g]", UrlError::Host),
-        ("[192.0.2.1]", UrlError::Host),
-        ("[v1]", UrlError::Host),
-        ("[v.a]", UrlError::Host),
-        ("[vx.a]", UrlError::Host),
-        ("[v1.]", UrlError::Host),
-        ("[v1.a/b]", UrlError::Host),
-        ("[::1]x", UrlError::Host),
+        ("exa mple.com", UrlError::Authority),
+        ("user@host@example.com", UrlError::Authority),
+        ("us er@example.com", UrlError::Authority),
+        ("[2001:db8::1", UrlError::Authority),
+        ("[2001:db8::g]", UrlError::Authority),
+        ("[192.0.2.1]", UrlError::Authority),
+        ("[v1]", UrlError::Authority),
+        ("[v.a]", UrlError::Authority),
+        ("[vx.a]", UrlError::Authority),
+        ("[v1.]", UrlError::Authority),
+        ("[v1.a/b]", UrlError::Authority),
+        ("[::1]x", UrlError::Authority),
         ("example.com:65536", UrlError::Port),
         ("example.com:-1", UrlError::Port),
         ("example.com:8a", UrlError::Port),
@@ -116,12 +116,13 @@ fn errors_describe_the_problem() {
     let errors = [
         UrlError::Syntax,
         UrlError::Scheme,
-        UrlError::Host,
+        UrlError::Authority,
         UrlError::Port,
         UrlError::PercentEncoding,
         UrlError::Utf8,
         UrlError::Relative,
         UrlError::Path,
+        UrlError::Component,
     ];
     let messages: Vec<String> = errors.iter().map(ToString::to_string).collect();
     assert_eq!(
@@ -134,7 +135,8 @@ fn errors_describe_the_problem() {
             "invalid percent-encoding in URL",
             "percent-decoded URL component is not UTF-8",
             "URL has no scheme",
-            "URL path is incompatible with its other components"
+            "URL path is incompatible with its other components",
+            "URL path component cannot be `.`, `..`, or empty here"
         ]
     );
     let error: Box<dyn std::error::Error> = Box::new(UrlError::Syntax);

@@ -7,9 +7,9 @@ use std::fmt;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum LocalPathError {
-    /// `..` segments would leave the root directory.
+    /// A path would leave the root directory: `..` would rise above it, or a local path does not begin with it.
     EscapesRoot,
-    /// A segment does not correspond to exactly one file name: once decoded, it is not UTF-8, or contains NUL or a path separator, such as `%2F`. Or a local path component is not UTF-8.
+    /// A URL path segment does not decode to exactly one file name, such as `%2F` or `%00`, or a file name cannot be a URL path segment, such as one containing NUL. On platforms other than Unix, both must also be Unicode.
     Component,
     /// A local path has a root or prefix, such as `/` or `C:`, so it cannot become a relative URL path.
     Absolute,
@@ -18,8 +18,8 @@ pub enum LocalPathError {
 impl fmt::Display for LocalPathError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::EscapesRoot => "URL path escapes the root directory",
-            Self::Component => "URL path segment does not correspond to one file name",
+            Self::EscapesRoot => "path escapes the root directory",
+            Self::Component => "path component does not correspond to one file name",
             Self::Absolute => "local path is not relative",
         })
     }

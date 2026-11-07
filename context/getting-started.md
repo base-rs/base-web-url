@@ -47,7 +47,7 @@ Components passed to `with_query` and `with_fragment` must already be percent-en
 
 ## Resolving links
 
-`Url::resolve` resolves a reference against a page's URL as a browser does, following RFC 3986 section 5.2:
+`Url::resolve` resolves a reference against a page's URL, following RFC 3986 section 5.2:
 
 ```rust
 use base_web_url::{Url, UrlReference};
@@ -62,18 +62,21 @@ assert_eq!(resolve("#top"), "https://example.com/docs/guide/index.html?version=2
 assert_eq!(resolve("//cdn.example.com/app.js"), "https://cdn.example.com/app.js");
 ```
 
-The page's final segment, `index.html`, is a file name and is replaced. A base whose path ends with `/` names a directory, so references resolve inside it. `UrlReference::resolve` does the same for a base that is itself relative, such as resolving links between pages of a site without knowing its host.
+This is the generic URI resolution of RFC 3986, not the WHATWG URL Standard that browsers follow, which also accepts and corrects input RFC 3986 rejects and resolves a few references, such as `http:g`, differently. The page's final segment, `index.html`, is a file name and is replaced. A base whose path ends with `/` names a directory, so references resolve inside it. `UrlReference::resolve` does the same for a base that is itself relative, such as resolving links between pages of a site without knowing its host.
 
 ## Joining paths
 
-To add path segments to a URL, such as building API endpoints, use `Url::join`, which treats the URL's path as a directory whether or not it ends with `/`:
+To add to a URL's path, such as building API endpoints, use `Url::join_component` for application values and `Url::join` for paths. Both treat the URL's path as a directory whether or not it ends with `/`:
 
 ```rust
 use base_web_url::{Url, UrlPath};
 
 let api = Url::parse("https://api.example.com/v1").unwrap();
-let user = api.join(&UrlPath::from_components(["users", "Ada Lovelace"]));
+let user = api.join_component("users").unwrap().join_component("Ada Lovelace").unwrap();
 assert_eq!(user.as_str(), "https://api.example.com/v1/users/Ada%20Lovelace");
+
+let status = api.join(&UrlPath::parse("../status").unwrap());
+assert_eq!(status.as_str(), "https://api.example.com/status");
 ```
 
-`join` removes the query and fragment, which belonged to the original resource. Use `resolve` when you mean what a link would mean, and `join` when you are appending to a path.
+A component is always data, so an untrusted value such as `../admin` cannot leave the path: it is encoded as one segment, and `.` and `..` are rejected. A path passed to `join` is URL syntax and can navigate. Both remove the query and fragment, which belonged to the original resource. Use `resolve` when you mean what a link would mean, and `join` when you are appending to a path.

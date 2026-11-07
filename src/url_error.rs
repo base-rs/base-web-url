@@ -14,7 +14,7 @@ pub enum UrlError {
     /// The scheme does not begin with a letter followed by letters, digits, `+`, `-`, or `.`.
     Scheme,
     /// The authority's user information or host is not valid, such as a malformed IPv6 address.
-    Host,
+    Authority,
     /// The port is not a number from 0 to 65535.
     Port,
     /// A `%` is not followed by two hexadecimal digits.
@@ -25,6 +25,8 @@ pub enum UrlError {
     Relative,
     /// The path cannot be combined with the other components: a path after an authority must be empty or begin with `/`, a path without an authority cannot begin with `//`, and the first segment of a reference without a scheme cannot contain `:`.
     Path,
+    /// A decoded path component cannot be represented as data: `.` and `..` would navigate, and an empty value cannot name something to append.
+    Component,
 }
 
 impl fmt::Display for UrlError {
@@ -32,12 +34,13 @@ impl fmt::Display for UrlError {
         formatter.write_str(match self {
             Self::Syntax => "invalid character in URL",
             Self::Scheme => "invalid URL scheme",
-            Self::Host => "invalid URL authority",
+            Self::Authority => "invalid URL authority",
             Self::Port => "invalid URL port",
             Self::PercentEncoding => "invalid percent-encoding in URL",
             Self::Utf8 => "percent-decoded URL component is not UTF-8",
             Self::Relative => "URL has no scheme",
             Self::Path => "URL path is incompatible with its other components",
+            Self::Component => "URL path component cannot be `.`, `..`, or empty here",
         })
     }
 }

@@ -73,8 +73,8 @@ fn follows_rfc_3986_exactly() {
         ("/a?%", UrlError::PercentEncoding),
         ("1http://example.com", UrlError::Scheme),
         ("ht_tp://example.com", UrlError::Scheme),
-        ("http://exa mple.com", UrlError::Host),
-        ("http://[::1", UrlError::Host),
+        ("http://exa mple.com", UrlError::Authority),
+        ("http://[::1", UrlError::Authority),
         ("http://example.com:80a", UrlError::Port),
         // Without a scheme, a `:` in the first segment is ambiguous.
         (":a", UrlError::Path),
@@ -207,7 +207,7 @@ fn resolves_the_rfc_3986_examples() {
     let base = reference("http://a/b/c/d;p?q");
     for (relative, expected) in RESOLUTION_EXAMPLES {
         assert_eq!(
-            base.resolve(&reference(relative)).to_string(),
+            base.resolve(reference(relative)).to_string(),
             expected,
             "{relative:?}"
         );
@@ -218,38 +218,36 @@ fn resolves_the_rfc_3986_examples() {
 fn resolution_handles_edge_cases() {
     // A base with an authority and an empty path behaves as if its path were `/`.
     assert_eq!(
-        reference("http://a").resolve(&reference("g")).to_string(),
+        reference("http://a").resolve(reference("g")).to_string(),
         "http://a/g"
     );
     assert_eq!(
-        reference("http://a").resolve(&reference("/g")).to_string(),
+        reference("http://a").resolve(reference("/g")).to_string(),
         "http://a/g"
     );
     assert_eq!(
-        reference("http://a?q").resolve(&reference("")).to_string(),
+        reference("http://a?q").resolve(reference("")).to_string(),
         "http://a?q"
     );
     // Without an authority, a resolved path beginning with `//` gains a `/.` prefix so it is not read as an authority.
     assert_eq!(
-        reference("foo:/a")
-            .resolve(&reference("/..//x"))
-            .to_string(),
+        reference("foo:/a").resolve(reference("/..//x")).to_string(),
         "foo:/.//x"
     );
     // Relative bases give relative results, keeping `..` segments they cannot resolve.
     assert_eq!(
         reference("docs/guide/")
-            .resolve(&reference("../../../api"))
+            .resolve(reference("../../../api"))
             .to_string(),
         "../api"
     );
     assert_eq!(
-        reference("docs/").resolve(&reference("../a:b")).to_string(),
+        reference("docs/").resolve(reference("../a:b")).to_string(),
         "./a:b"
     );
     assert_eq!(
         reference("/docs/")
-            .resolve(&reference("//cdn.example.com/x"))
+            .resolve(reference("//cdn.example.com/x"))
             .to_string(),
         "//cdn.example.com/x"
     );
@@ -289,4 +287,231 @@ fn formatting_errors_propagate() {
         );
     }
     assert!(write!(Failing { remaining: length }, "{full}").is_ok());
+}
+
+#[test]
+fn rootless_paths_with_a_scheme_follow_rfc_3986_exactly() {
+    assert_eq!(
+        reference("foo:a/b").resolve(reference("../c")).to_string(),
+        "foo:/c"
+    );
+    assert_eq!(
+        reference("foo:a").resolve(reference(".")).to_string(),
+        "foo:"
+    );
+    assert_eq!(
+        reference("foo:").resolve(reference(".")).to_string(),
+        "foo:",
+        "resolution is idempotent"
+    );
+    assert_eq!(
+        reference("urn:a:b").resolve(reference("c")).to_string(),
+        "urn:c"
+    );
+}
+
+#[test]
+fn references_relative_to_a_base() {
+    let base = reference("https://example.com/docs/index.html");
+    let cases = [
+        ("/api/?q#f", "../api/?q#f"),
+        ("https://example.com/docs/a", "a"),
+        ("//example.com/docs/", "./"),
+        ("https://other.example/x", "https://other.example/x"),
+        ("//other.example/x", "//other.example/x"),
+        ("http://example.com/x", "http://example.com/x"),
+        ("x", "x"),
+        ("/a:b", "../a:b"),
+        ("/docs/a:b", "./a:b"),
+    ];
+    for (target, expected) in cases {
+        let relative = reference(target).relative_to(&base);
+        assert_eq!(relative.to_string(), expected, "{target}");
+    }
+    assert_eq!(
+        reference("/x")
+            .relative_to(reference("https://example.com"))
+            .to_string(),
+        "/x",
+        "a base without an absolute path is not comparable"
+    );
+    assert_eq!(
+        base.resolve(reference("/api/?q#f").relative_to(&base))
+            .to_string(),
+        "https://example.com/api/?q#f"
+    );
+}
+
+#[test]
+fn joins_and_writes_references_explicitly() {
+    assert_eq!(
+        reference("docs/?q#f")
+            .join(&UrlPath::parse("a").unwrap())
+            .to_string(),
+        "docs/a"
+    );
+    assert_eq!(
+        reference("//example.com")
+            .join(&UrlPath::parse("a").unwrap())
+            .to_string(),
+        "//example.com/a"
+    );
+    for (original, explicit) in [
+        ("guide.html?q", "./guide.html?q"),
+        ("../a", "../a"),
+        ("/a", "/a"),
+        ("?q", "?q"),
+        ("https:a", "https:a"),
+        ("//h/a", "//h/a"),
+    ] {
+        assert_eq!(
+            reference(original).to_explicit().to_string(),
+            explicit,
+            "{original}"
+        );
+    }
+}
+
+/// RFC 3986 section 5.2.4, transcribed literally, as an independent check.
+// Rules A and B of the RFC strip prefixes of the same length; they stay separate to match the text.
+#[allow(clippy::if_same_then_else)]
+fn rfc_remove_dot_segments(mut input: &str) -> String {
+    let mut output = String::new();
+    while !input.is_empty() {
+        if input.starts_with("../") {
+            input = &input[3..];
+        } else if input.starts_with("./") {
+            input = &input[2..];
+        } else if input.starts_with("/./") {
+            input = &input[2..];
+        } else if input == "/." {
+            input = "/";
+        } else if input.starts_with("/../") {
+            input = &input[3..];
+            output.truncate(output.rfind('/').unwrap_or(0));
+        } else if input == "/.." {
+            input = "/";
+            output.truncate(output.rfind('/').unwrap_or(0));
+        } else if input == "." || input == ".." {
+            input = "";
+        } else {
+            let start = usize::from(input.starts_with('/'));
+            let end = input[start..]
+                .find('/')
+                .map_or(input.len(), |index| index + start);
+            output.push_str(&input[..end]);
+            input = &input[end..];
+        }
+    }
+    output
+}
+
+/// RFC 3986 section 5.2.2 and 5.2.3, transcribed literally, for a base with a scheme.
+fn rfc_resolve(base: &UrlReference, reference: &UrlReference) -> String {
+    let (scheme, authority, path, query);
+    if reference.scheme().is_some() {
+        (scheme, authority, path, query) = (
+            reference.scheme(),
+            reference.authority(),
+            rfc_remove_dot_segments(reference.path().as_str()),
+            reference.query(),
+        );
+    } else if reference.authority().is_some() {
+        (scheme, authority, path, query) = (
+            base.scheme(),
+            reference.authority(),
+            rfc_remove_dot_segments(reference.path().as_str()),
+            reference.query(),
+        );
+    } else {
+        (scheme, authority) = (base.scheme(), base.authority());
+        if reference.path().is_empty() {
+            (path, query) = (base.path().to_string(), reference.query().or(base.query()));
+        } else if reference.path().is_absolute() {
+            (path, query) = (
+                rfc_remove_dot_segments(reference.path().as_str()),
+                reference.query(),
+            );
+        } else {
+            let merged = if base.authority().is_some() && base.path().is_empty() {
+                format!("/{}", reference.path())
+            } else {
+                let base_path = base.path().as_str();
+                format!(
+                    "{}{}",
+                    &base_path[..base_path.rfind('/').map_or(0, |index| index + 1)],
+                    reference.path()
+                )
+            };
+            (path, query) = (rfc_remove_dot_segments(&merged), reference.query());
+        }
+    }
+    // A path without an authority that begins with `//` is written with a `/.` prefix, as `UrlReference` documents.
+    let path = if authority.is_none() && path.starts_with("//") {
+        format!("/.{path}")
+    } else {
+        path
+    };
+    let mut text = format!("{}:", scheme.unwrap());
+    if let Some(authority) = authority {
+        text.push_str(&format!("//{authority}"));
+    }
+    text.push_str(&path);
+    if let Some(query) = query {
+        text.push_str(&format!("?{query}"));
+    }
+    if let Some(fragment) = reference.fragment() {
+        text.push_str(&format!("#{fragment}"));
+    }
+    text
+}
+
+#[test]
+fn resolution_matches_a_literal_transcription_of_rfc_3986() {
+    const PARTS: [&str; 8] = ["a", "b", "", ".", "..", "g;x", "%2E", "c:d"];
+    let mut state: u64 = 3;
+    let mut next = |modulus: u64| {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (state >> 33) % modulus
+    };
+    let bases = [
+        "http://a/b/c/d;p?q",
+        "http://a/b//c",
+        "http://a",
+        "foo:a/b",
+        "foo:a",
+        "foo:/a/b/",
+        "urn:x:y",
+        "file:///a/b",
+    ];
+    for base in bases {
+        let base = reference(base);
+        for _ in 0..20_000 {
+            let mut text = String::new();
+            match next(4) {
+                0 => text.push('/'),
+                1 => text.push_str("//h/"),
+                _ => {}
+            }
+            for index in 0..next(5) {
+                if index > 0 {
+                    text.push('/');
+                }
+                text.push_str(PARTS[next(PARTS.len() as u64) as usize]);
+            }
+            if next(4) == 0 {
+                text.push_str("?y");
+            }
+            let Ok(relative) = UrlReference::parse(&text) else {
+                continue;
+            };
+            assert_eq!(
+                base.resolve(&relative).to_string(),
+                rfc_resolve(&base, &relative),
+                "{base} + {text}"
+            );
+        }
+    }
 }

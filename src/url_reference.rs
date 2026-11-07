@@ -19,7 +19,7 @@ use std::str::FromStr;
 /// assert_eq!((reference.query(), reference.fragment()), (Some("page=2"), Some("results")));
 /// # Ok::<(), base_web_url::UrlError>(())
 /// ```
-#[derive(Clone, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct UrlReference {
     scheme: Option<String>,
     authority: Option<Authority>,
@@ -139,7 +139,7 @@ impl UrlReference {
         self.scheme.is_none()
     }
 
-    /// Resolve `reference` against this reference as its base, following RFC 3986 section 5.2.2.
+    /// Resolve `reference` against this reference as its base, following RFC 3986 section 5.2.
     ///
     /// A reference with a scheme replaces the base; one with an authority keeps only the base's scheme; an empty path keeps the base's path and, without a query of its own, its query; and any other path is resolved with [`UrlPath::resolve`]. The fragment always comes from `reference`. The base may itself be relative, in which case the result is relative too.
     ///
@@ -151,22 +151,25 @@ impl UrlReference {
     /// assert_eq!(base.resolve(&UrlReference::parse("#top")?).to_string(), "/docs/guide/index.html?version=2#top");
     /// # Ok::<(), base_web_url::UrlError>(())
     /// ```
-    pub fn resolve(&self, reference: &UrlReference) -> UrlReference {
+    #[must_use]
+    pub fn resolve(&self, reference: impl AsRef<UrlReference>) -> UrlReference {
+        let reference = reference.as_ref();
+        let scheme = reference.scheme.clone().or_else(|| self.scheme.clone());
+        // With a scheme, dot segments are removed exactly as RFC 3986 section 5.2.4 does, even from a path without a leading `/`; a relative result keeps the `..` segments it cannot resolve.
+        let exact = scheme.is_some();
+        let remove_dot_segments = |path: &UrlPath| {
+            if exact {
+                path.remove_dot_segments_rfc()
+            } else {
+                path.remove_dot_segments()
+            }
+        };
         let fragment = reference.fragment.clone();
-        if reference.scheme.is_some() {
+        if reference.scheme.is_some() || reference.authority.is_some() {
             return Self::from_parts(
-                reference.scheme.clone(),
+                scheme,
                 reference.authority.clone(),
-                reference.path.remove_dot_segments(),
-                reference.query.clone(),
-                fragment,
-            );
-        }
-        if reference.authority.is_some() {
-            return Self::from_parts(
-                self.scheme.clone(),
-                reference.authority.clone(),
-                reference.path.remove_dot_segments(),
+                remove_dot_segments(&reference.path),
                 reference.query.clone(),
                 fragment,
             );
@@ -176,25 +179,76 @@ impl UrlReference {
                 self.path.clone(),
                 reference.query.clone().or_else(|| self.query.clone()),
             )
-        } else if self.authority.is_some() && self.path.is_empty() && !reference.path.is_absolute()
-        {
-            // A base with an authority and an empty path behaves as if its path were `/`.
+        } else if reference.path.is_absolute() {
             (
-                UrlPath::parse("/")
-                    .expect("`/` is a valid path")
-                    .resolve(&reference.path),
+                remove_dot_segments(&reference.path),
+                reference.query.clone(),
+            )
+        } else if self.authority.is_some() && self.path.is_empty() {
+            // A base with an authority and an empty path merges as if its path were `/`.
+            (
+                remove_dot_segments(&root().merge(&reference.path)),
                 reference.query.clone(),
             )
         } else {
-            (self.path.resolve(&reference.path), reference.query.clone())
+            (
+                remove_dot_segments(&self.path.merge(&reference.path)),
+                reference.query.clone(),
+            )
+        };
+        Self::from_parts(scheme, self.authority.clone(), path, query, fragment)
+    }
+
+    /// This reference relative to `base`, such as `../api/?page=2` for `https://example.com/api/?page=2` from `https://example.com/docs/index.html`, keeping its query and fragment; see [`UrlPath::relative_to`].
+    ///
+    /// Resolving the result against `base` gives this reference again, with dot segments removed from its path. A reference with a different scheme or authority from `base`, or a path that is not absolute, is returned unchanged.
+    #[must_use]
+    pub fn relative_to(&self, base: impl AsRef<UrlReference>) -> UrlReference {
+        let base = base.as_ref();
+        let comparable = match (&self.scheme, &self.authority) {
+            (Some(_), _) => self.scheme == base.scheme && self.authority == base.authority,
+            (None, Some(_)) => self.authority == base.authority,
+            (None, None) => true,
+        };
+        if !comparable || !self.path.is_absolute() || !base.path.is_absolute() {
+            return self.clone();
+        }
+        Self::from_parts(
+            None,
+            None,
+            self.path.relative_to(&base.path),
+            self.query.clone(),
+            self.fragment.clone(),
+        )
+    }
+
+    /// Append `path` to this reference's path as if it were a directory, as for [`UrlPath::join`], removing the query and fragment, which belonged to the original resource. A reference with an authority and an empty path, such as `https://example.com`, joins as if its path were `/`.
+    #[must_use]
+    pub fn join(&self, path: &UrlPath) -> UrlReference {
+        let base = if self.authority.is_some() && self.path.is_empty() {
+            root()
+        } else {
+            self.path.clone()
         };
         Self::from_parts(
             self.scheme.clone(),
             self.authority.clone(),
-            path,
-            query,
-            fragment,
+            base.join(path),
+            None,
+            None,
         )
+    }
+
+    /// This reference written explicitly as a relative reference when it is a relative path, such as `./guide.html` for `guide.html`; see [`UrlPath::to_explicit`]. References with a scheme, an authority, or an absolute or empty path are unchanged.
+    #[must_use]
+    pub fn to_explicit(&self) -> UrlReference {
+        if self.scheme.is_some() || self.authority.is_some() {
+            return self.clone();
+        }
+        Self {
+            path: self.path.to_explicit(),
+            ..self.clone()
+        }
     }
 
     /// A reference from resolved components, adjusting a path that would otherwise be read differently: `//` without an authority would begin an authority, so it becomes `/.//`, and a `:` in the first segment of a relative reference would end a scheme, so the path gains a leading `./`.
@@ -297,4 +351,9 @@ impl fmt::Debug for UrlReference {
             .field(&format_args!("{self}"))
             .finish()
     }
+}
+
+/// The root path, `/`.
+fn root() -> UrlPath {
+    UrlPath::parse("/").expect("`/` is a valid path")
 }

@@ -159,7 +159,7 @@ fn joins_paths_as_directories() {
     );
     assert_eq!(
         url("https://example.com/v1/")
-            .join(&UrlPath::from_components(["users", "a/b"]))
+            .join(&UrlPath::from_components(["users", "a/b"]).unwrap())
             .as_str(),
         "https://example.com/v1/users/a%2Fb"
     );
@@ -169,7 +169,10 @@ fn joins_paths_as_directories() {
 
 #[test]
 fn errors_propagate_from_each_component() {
-    assert_eq!(Url::parse("https://exa mple.com/"), Err(UrlError::Host));
+    assert_eq!(
+        Url::parse("https://exa mple.com/"),
+        Err(UrlError::Authority)
+    );
     let doubled = url("https://example.com//x");
     assert_eq!(doubled.path().as_str(), "//x");
     assert_eq!(
@@ -193,4 +196,70 @@ fn errors_propagate_from_each_component() {
         "a path with a scheme is kept as given"
     );
     assert_eq!(Url::new("https", None, path("//x")), Err(UrlError::Path));
+}
+
+#[test]
+fn changes_schemes_and_appends_components() {
+    assert_eq!(
+        url("http://example.com/a")
+            .with_scheme("HTTPS")
+            .unwrap()
+            .as_str(),
+        "https://example.com/a"
+    );
+    assert_eq!(
+        url("http://example.com/a").with_scheme("1x"),
+        Err(UrlError::Scheme)
+    );
+    let api = url("https://api.example.com/v1?key=x");
+    assert_eq!(
+        api.join_component("users")
+            .unwrap()
+            .join_component("..")
+            .map(|url| url.to_string()),
+        Err(UrlError::Component)
+    );
+    assert_eq!(
+        api.join_component("a/../../b").unwrap().as_str(),
+        "https://api.example.com/v1/a%2F..%2F..%2Fb"
+    );
+    assert_eq!(api.join_component(""), Err(UrlError::Component));
+}
+
+#[test]
+fn urls_compare_and_order_with_references() {
+    let parsed = url("https://example.com/a");
+    assert!(parsed == UrlReference::parse("https://example.com/a").unwrap());
+    assert!(UrlReference::parse("https://example.com/a").unwrap() == parsed);
+    assert!(url("https://a.example/") < url("https://b.example/"));
+    assert!(Authority::parse("a.example").unwrap() < Authority::parse("b.example").unwrap());
+    assert_eq!(
+        Authority::parse("a")
+            .unwrap()
+            .partial_cmp(&Authority::parse("a").unwrap()),
+        Some(std::cmp::Ordering::Equal)
+    );
+}
+
+#[test]
+fn urls_relative_to_a_page_keep_their_query() {
+    let page = url("https://example.com/docs/guide/index.html");
+    assert_eq!(
+        url("https://example.com/api/?page=2#x")
+            .relative_to(&page)
+            .to_string(),
+        "../../api/?page=2#x"
+    );
+    assert_eq!(
+        page.resolve(url("https://example.com/api/?page=2#x").relative_to(&page))
+            .as_str(),
+        "https://example.com/api/?page=2#x"
+    );
+    assert_eq!(
+        url("https://other.example/x")
+            .relative_to(&page)
+            .to_string(),
+        "https://other.example/x",
+        "another authority cannot be relative"
+    );
 }

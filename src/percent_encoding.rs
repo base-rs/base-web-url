@@ -16,15 +16,7 @@ use std::fmt::Write as _;
 /// assert_eq!(encode_component("café & bar/baz"), "caf%C3%A9%20%26%20bar%2Fbaz");
 /// ```
 pub fn encode_component(value: &str) -> String {
-    let mut encoded = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        if is_unreserved(byte) {
-            encoded.push(char::from(byte));
-        } else {
-            write!(encoded, "%{byte:02X}").expect("writing to a string cannot fail");
-        }
-    }
-    encoded
+    encode_bytes(value.as_bytes())
 }
 
 /// Decode the `%XX` escapes in `text` and interpret the result as UTF-8.
@@ -42,8 +34,31 @@ pub fn encode_component(value: &str) -> String {
 ///
 /// [`UrlError::PercentEncoding`] for a `%` not followed by two hexadecimal digits, and [`UrlError::Utf8`] when the decoded bytes are not UTF-8.
 pub fn decode_component(text: &str) -> Result<Cow<'_, str>, UrlError> {
+    match decode_bytes(text)? {
+        Cow::Borrowed(_) => Ok(Cow::Borrowed(text)),
+        Cow::Owned(bytes) => String::from_utf8(bytes)
+            .map(Cow::Owned)
+            .map_err(|_| UrlError::Utf8),
+    }
+}
+
+/// Percent-encode every byte of `bytes` except the unreserved characters.
+pub(crate) fn encode_bytes(bytes: &[u8]) -> String {
+    let mut encoded = String::with_capacity(bytes.len());
+    for &byte in bytes {
+        if is_unreserved(byte) {
+            encoded.push(char::from(byte));
+        } else {
+            write!(encoded, "%{byte:02X}").expect("writing to a string cannot fail");
+        }
+    }
+    encoded
+}
+
+/// Decode the `%XX` escapes in `text` to bytes, borrowing text without escapes.
+pub(crate) fn decode_bytes(text: &str) -> Result<Cow<'_, [u8]>, UrlError> {
     if !text.contains('%') {
-        return Ok(Cow::Borrowed(text));
+        return Ok(Cow::Borrowed(text.as_bytes()));
     }
     let bytes = text.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
@@ -64,7 +79,5 @@ pub fn decode_component(text: &str) -> Result<Cow<'_, str>, UrlError> {
             index += 1;
         }
     }
-    String::from_utf8(decoded)
-        .map(Cow::Owned)
-        .map_err(|_| UrlError::Utf8)
+    Ok(Cow::Owned(decoded))
 }
