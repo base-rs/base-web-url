@@ -9,10 +9,10 @@
 //! use base_web_url::{Url, UrlPath, UrlReference};
 //!
 //! let page = Url::parse("https://example.com/docs/guide/index.html")?;
-//! let link = page.resolve(&UrlReference::parse("../My%20Report.pdf")?);
+//! let link = page.resolve(UrlReference::parse("../My%20Report.pdf")?);
 //! assert_eq!(link.as_str(), "https://example.com/docs/My%20Report.pdf");
 //!
-//! let file = link.path().local_path("/srv/public").unwrap();
+//! let file = link.path().to_local_path("/srv/public").unwrap();
 //! assert_eq!(file, std::path::Path::new("/srv/public/docs/My Report.pdf"));
 //! # Ok::<(), base_web_url::UrlError>(())
 //! ```

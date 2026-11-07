@@ -10,16 +10,16 @@ use std::str::FromStr;
 /// A URL is a [`UrlReference`] that is not relative, so it converts into one and can be used wherever a reference is accepted through `AsRef<UrlReference>`. Converting a relative reference into a URL fails.
 ///
 /// ```
-/// use base_web_url::{Url, UrlPath, UrlReference};
+/// use base_web_url::{Url, UrlReference};
 ///
 /// let page = Url::parse("https://example.com/docs/guide/index.html")?;
-/// assert_eq!(page.resolve(&UrlReference::parse("../api/")?).as_str(), "https://example.com/docs/api/");
+/// assert_eq!(page.resolve(UrlReference::parse("../api/")?).as_str(), "https://example.com/docs/api/");
 ///
 /// let api = Url::parse("https://api.example.com/v1")?;
-/// assert_eq!(api.join(&UrlPath::from_components(["users", "Ada Lovelace"])).as_str(), "https://api.example.com/v1/users/Ada%20Lovelace");
+/// assert_eq!(api.join_component("users")?.join_component("Ada Lovelace")?.as_str(), "https://api.example.com/v1/users/Ada%20Lovelace");
 /// # Ok::<(), base_web_url::UrlError>(())
 /// ```
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Url {
     reference: UrlReference,
     /// The written form, cached so [`Self::as_str`] can borrow it.
@@ -87,6 +87,17 @@ impl Url {
         &self.reference
     }
 
+    /// The same URL with the scheme `scheme`, such as `https`.
+    ///
+    /// # Errors
+    ///
+    /// [`UrlError::Scheme`] for an invalid scheme.
+    pub fn with_scheme(self, scheme: &str) -> Result<Self, UrlError> {
+        Ok(Self::from_reference(
+            self.reference.with_scheme(Some(scheme))?,
+        ))
+    }
+
     /// The same URL with the authority `authority`, or none, as for [`UrlReference::with_authority`].
     ///
     /// # Errors
@@ -127,27 +138,38 @@ impl Url {
         ))
     }
 
-    /// Resolve `reference` against this URL, following RFC 3986 section 5.2.2, as a browser resolves a link on a page; see [`UrlReference::resolve`].
+    /// Resolve `reference` against this URL, following RFC 3986 section 5.2, as for [`UrlReference::resolve`].
+    ///
+    /// This is the generic URI resolution of RFC 3986, not the WHATWG URL Standard that browsers follow: browsers also accept and correct input that RFC 3986 rejects, and treat a few cases, such as `http:g`, differently.
+    #[must_use]
     pub fn resolve(&self, reference: impl AsRef<UrlReference>) -> Url {
-        Self::from_reference(self.reference.resolve(reference.as_ref()))
+        Self::from_reference(self.reference.resolve(reference))
     }
 
-    /// Append `path` to this URL's path as if it were a directory, as for [`UrlPath::join`], removing the query and fragment, which belonged to the original resource.
+    /// This URL relative to `base`, keeping its query and fragment, as for [`UrlReference::relative_to`].
+    #[must_use]
+    pub fn relative_to(&self, base: impl AsRef<UrlReference>) -> UrlReference {
+        self.reference.relative_to(base)
+    }
+
+    /// Append `path` to this URL's path as if it were a directory, as for [`UrlReference::join`], removing the query and fragment, which belonged to the original resource. A URL with an authority and an empty path, such as `https://example.com`, joins as if its path were `/`.
     ///
-    /// A URL with an authority and an empty path, such as `https://example.com`, joins as if its path were `/`.
+    /// `..` in `path` can leave this URL's path; use [`Self::join_component`] to append an untrusted value.
+    #[must_use]
     pub fn join(&self, path: &UrlPath) -> Url {
-        let base = if self.authority().is_some() && self.path().is_empty() {
-            UrlPath::parse("/").expect("`/` is a valid path")
-        } else {
-            self.path().clone()
-        };
-        Self::from_reference(UrlReference::from_parts(
-            self.reference.scheme().map(str::to_owned),
-            self.authority().cloned(),
-            base.join(path),
-            None,
-            None,
-        ))
+        Self::from_reference(self.reference.join(path))
+    }
+
+    /// Append one decoded application value as a single path segment, as for [`UrlPath::join_component`], removing the query and fragment.
+    ///
+    /// # Errors
+    ///
+    /// [`UrlError::Component`] for an empty value, `.`, or `..`.
+    pub fn join_component(&self, component: &str) -> Result<Url, UrlError> {
+        if component.is_empty() {
+            return Err(UrlError::Component);
+        }
+        Ok(self.join(&UrlPath::from_components([component])?))
     }
 
     /// A URL from a reference that is known to have a scheme.
@@ -204,5 +226,17 @@ impl fmt::Display for Url {
 impl fmt::Debug for Url {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.debug_tuple("Url").field(&self.text).finish()
+    }
+}
+
+impl PartialEq<UrlReference> for Url {
+    fn eq(&self, other: &UrlReference) -> bool {
+        self.reference == *other
+    }
+}
+
+impl PartialEq<Url> for UrlReference {
+    fn eq(&self, other: &Url) -> bool {
+        *self == other.reference
     }
 }
