@@ -275,6 +275,7 @@ impl FormParser {
     }
 }
 
+// SECURITY: Decoded names and values may contain any character, including NUL, CR, and LF from `%00` and `%0D%0A`, as the WHATWG URL Standard decodes them. This is not an injection weakness here: they are data, the parser interprets nothing in them but a bracket path's `[` and `]`, and a consumer that writes them into another syntax, such as a header or a log line, must encode them for it.
 /// Decode `encoded`, a name or a piece of a value, giving its text, borrowed when nothing needed decoding, and how many bytes of `encoded` it covers. Unless `complete`, a partial escape or UTF-8 sequence at the end is left for a later call, which will have more of it. A failure gives the index of the problem in `encoded`.
 fn decode(encoded: &[u8], complete: bool) -> Result<(Cow<'_, str>, usize), Failure> {
     let (mut index, mut escaped, mut invalid_escape) = (0, false, false);
