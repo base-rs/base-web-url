@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use std::fmt;
 
 /// The complete, decoded name of a pair, borrowed from the input when it has no escapes.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct FormName<'a> {
     text: Cow<'a, str>,
     has_value: bool,
@@ -69,6 +69,15 @@ impl<'a> FormName<'a> {
             .map_err(|kind: FormErrorKind| FormError::new(kind, self.offset))
     }
 }
+
+/// Names are equal when their text, whether they have a value, and their offsets are.
+impl PartialEq for FormName<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        (&self.text, self.has_value, self.offset) == (&other.text, other.has_value, other.offset)
+    }
+}
+
+impl Eq for FormName<'_> {}
 
 /// Shows the name's length rather than its text, since names must not reach logs.
 impl fmt::Debug for FormName<'_> {

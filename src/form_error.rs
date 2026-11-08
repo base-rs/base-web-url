@@ -11,6 +11,8 @@ pub struct FormError {
 }
 
 /// The kind of [`FormError`].
+///
+/// When input has several problems, the parser reports the first in the input, however the input is split: a limit is reached at the first byte beyond it, so a malformed escape or invalid UTF-8 within a name or value's limit is reported rather than the limit. A malformed escape that interrupts an incomplete UTF-8 sequence, as in `%C3%ZZ`, is reported as malformed percent-encoding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum FormErrorKind {

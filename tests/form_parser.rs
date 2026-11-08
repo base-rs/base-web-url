@@ -367,9 +367,20 @@ fn limits_the_length_of_names() {
         limited_error(empty, b"=1&a"),
         (FormErrorKind::NameLengthLimit, 3)
     );
-    // A name too long for the limit fails, whatever else is wrong with it.
+    // Errors are reported in the order of the input, so a malformed name within the limit fails as one.
+    assert_eq!(limited_error(limits, b"%FF%FF"), (FormErrorKind::Utf8, 0));
     assert_eq!(
-        limited_error(limits, b"%FF%FF"),
+        limited_error(
+            FormLimits {
+                name_length_limit: 4,
+                ..limits
+            },
+            b"%ZZabcdef=1"
+        ),
+        (FormErrorKind::PercentEncoding, 0)
+    );
+    assert_eq!(
+        limited_error(limits, b"ab%C3%A9"),
         (FormErrorKind::NameLengthLimit, 3)
     );
 }
@@ -498,6 +509,64 @@ fn reports_the_end_again() {
     assert!(parser.is_finished());
     assert_eq!(parser.parse(b"").unwrap().event, FormEvent::End);
     assert_eq!(parser.parse_end(b"").unwrap().event, FormEvent::End);
+}
+
+#[test]
+fn never_reads_beyond_the_end_of_the_input() {
+    let mut parser = FormParser::new();
+    let parsed = parser.parse_end(b"a").unwrap();
+    assert_eq!(parsed.consumed, 1);
+    // Bytes given after the end are not part of the input, and `parse` is `parse_end` once the input has ended.
+    let parsed = parser.parse(b"xyz").unwrap();
+    assert_eq!((parsed.consumed, parsed.event), (0, FormEvent::PairEnd));
+    let parsed = parser.parse(b"xyz").unwrap();
+    assert_eq!((parsed.consumed, parsed.event), (0, FormEvent::End));
+    let parsed = parser.parse_end(b"more=1").unwrap();
+    assert_eq!((parsed.consumed, parsed.event), (0, FormEvent::End));
+
+    let mut parser = FormParser::new();
+    assert!(matches!(
+        parser.parse_end(b"a=12").unwrap().event,
+        FormEvent::Name(_)
+    ));
+    let parsed = parser.parse(b"12345").unwrap();
+    assert_eq!(parsed.event, FormEvent::Value(Cow::Borrowed("12")));
+    assert_eq!(parser.parse(b"").unwrap().event, FormEvent::PairEnd);
+}
+
+#[test]
+fn names_compare_by_what_they_show() {
+    let name = |limits| {
+        let mut pairs = base_web_url::FormPairs::with_limits("a[b]=1", limits);
+        pairs.next().unwrap().unwrap().into_parts().0
+    };
+    let shallow = name(FormLimits {
+        depth_limit: 1,
+        ..FormLimits::default()
+    });
+    assert_eq!(shallow, name(FormLimits::default()));
+    assert_ne!(
+        shallow,
+        form_pairs("a[b]").next().unwrap().unwrap().into_parts().0
+    );
+}
+
+#[test]
+fn long_input_fed_a_byte_at_a_time() {
+    // The parser searches each byte a bounded number of times, so this takes linear time.
+    let length = 256 * 1024;
+    let limits = FormLimits {
+        name_length_limit: length,
+        ..FormLimits::default()
+    };
+    let mut input = vec![b'n'; length];
+    input.push(b'=');
+    input.extend(std::iter::repeat_n(b'v', length));
+    let bytes: Vec<&[u8]> = input.chunks(1).collect();
+    let pairs = collect(limits, &bytes).unwrap();
+    assert_eq!(pairs.len(), 1);
+    assert_eq!(pairs[0].1.len(), length);
+    assert_eq!(pairs[0].2.as_ref().unwrap().len(), length);
 }
 
 #[test]
@@ -744,7 +813,7 @@ fn reference_decode(encoded: &[u8], offset: usize) -> Result<String, (FormErrorK
 
 #[test]
 fn agrees_with_the_standard_for_generated_input() {
-    let pieces: [&[u8]; 22] = [
+    let pieces: [&[u8]; 27] = [
         b"a",
         b"b",
         b"=",
@@ -767,6 +836,11 @@ fn agrees_with_the_standard_for_generated_input() {
         b"%C3",
         b"\xff",
         b"\xe2\x82",
+        "🦀".as_bytes(),
+        b"\xf0%9F%A6\x80",
+        b"%F0\x9f",
+        b"[",
+        b"]",
     ];
     let mut random = Random(0x9e37_79b9_7f4a_7c15);
     let mut outcomes = [0; 3];
@@ -817,6 +891,24 @@ fn agrees_with_the_standard_for_generated_input() {
             depth_limit: FormLimits::DEPTH_LIMIT,
         };
         let _ = assert_split_invariant(limits, &input);
+        // Random pieces, under limits that may be zero, small, or the largest.
+        let mut limit = |small: usize| match random.below(4) {
+            0 => usize::MAX,
+            1 => usize::MAX - random.below(3),
+            _ => random.below(small),
+        };
+        let limits = FormLimits {
+            size_limit: limit(64),
+            pair_count_limit: limit(5),
+            name_length_limit: limit(14),
+            value_length_limit: limit(18),
+            depth_limit: FormLimits::DEPTH_LIMIT,
+        };
+        assert_eq!(
+            collect(limits, &chunks),
+            collect(limits, &[&input]),
+            "{input:?} as {chunks:?} with {limits:?}"
+        );
     }
     assert!(outcomes.iter().all(|&count| count > 100), "{outcomes:?}");
 }

@@ -38,6 +38,8 @@ pub struct FormParser {
     /// The bytes consumed before the current call, which never exceeds the size limit.
     offset: usize,
     pair_count: usize,
+    /// Where the input ends, once [`Self::parse_end`] has been called.
+    end: Option<usize>,
     /// The error the parser reported, which it reports again for every later call.
     failed: Option<FormError>,
 }
@@ -79,6 +81,7 @@ impl FormParser {
             state: State::Pair,
             offset: 0,
             pair_count: 0,
+            end: None,
             failed: None,
         }
     }
@@ -101,7 +104,7 @@ impl FormParser {
         self.state == State::End
     }
 
-    /// Parse the next event from `input`, which must begin with the bytes the previous call did not consume, while more input may follow.
+    /// Parse the next event from `input`, which must begin with the bytes the previous call did not consume, while more input may follow. Once [`Self::parse_end`] has been called, the input has ended, so this is the same as calling it.
     ///
     /// # Errors
     ///
@@ -110,7 +113,7 @@ impl FormParser {
         self.run(input, false)
     }
 
-    /// Parse the next event from `input`, which must be all of the input that remains after the bytes already consumed. Call it until it reports [`FormEvent::End`]; it never reports [`FormEvent::Incomplete`], and once it reports `End`, every later call reports `End` again.
+    /// Parse the next event from `input`, which must be all of the input that remains after the bytes already consumed. Call it until it reports [`FormEvent::End`]; given all of the remaining input, it never reports [`FormEvent::Incomplete`]. The first call fixes where the input ends: later calls never read beyond it, and once the parser reports `End`, every later call reports `End` again.
     ///
     /// # Errors
     ///
@@ -123,6 +126,15 @@ impl FormParser {
         if let Some(error) = self.failed {
             return Err(error);
         }
+        if end && self.end.is_none() {
+            self.end = Some(self.offset.saturating_add(input.len()));
+        }
+        // Bytes beyond the end of the input, given to a later call, are never read.
+        let input = match self.end {
+            Some(end) => &input[..input.len().min(end - self.offset)],
+            None => input,
+        };
+        let end = self.end == Some(self.offset + input.len());
         // Bytes beyond the size limit are never consumed, so a step that needs one fails; until then, the parser reports what the bytes within the limit hold, however the input is split.
         let remaining = self.limits.size_limit - self.offset;
         let truncated = input.len() > remaining;
@@ -186,6 +198,9 @@ impl FormParser {
                     let (length, has_value) = match found {
                         Some(index) => (index, scan[index] == b'='),
                         None if scan.len() > limit => {
+                            // Errors are reported in the order of the input, so a malformed name within the limit fails as one.
+                            decode(&rest[..limit], false)
+                                .map_err(|(kind, index)| (kind, *consumed + index))?;
                             return Err((FormErrorKind::NameLengthLimit, *consumed + limit));
                         }
                         None if end => (rest.len(), false),

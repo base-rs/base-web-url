@@ -2,7 +2,7 @@
 // Copyright, 2026, by Samuel Williams.
 
 use FormPathSegment::{Element, Key};
-use base_web_url::{FormErrorKind, FormLimits, FormPairs, FormPathSegment, form_pairs};
+use base_web_url::{FormErrorKind, FormLimits, FormPairs, FormPath, FormPathSegment, form_pairs};
 
 /// A segment, owned: a key, or `None` for `[]`.
 type Segment = Option<String>;
@@ -129,4 +129,23 @@ fn segments_iterate_once() {
     assert_eq!(segments.next(), None);
     assert_eq!(segments.next(), None);
     assert_eq!(path, pair.name().path().unwrap());
+}
+
+#[test]
+fn reads_names_from_elsewhere_by_the_same_rules() {
+    let path = FormPath::parse("files[][name]", FormLimits::DEPTH_LIMIT).unwrap();
+    assert!(path.segments().eq([Key("files"), Element, Key("name")]));
+    assert_eq!(
+        path,
+        form_pairs("files[][name]")
+            .next()
+            .unwrap()
+            .unwrap()
+            .name()
+            .path()
+            .unwrap()
+    );
+    assert_eq!(FormPath::parse("[a]", 8), Err(FormErrorKind::InvalidPath));
+    assert_eq!(FormPath::parse("a[b]", 1), Err(FormErrorKind::DepthLimit));
+    assert_eq!(FormPath::parse("a", 1).unwrap().depth(), 1);
 }

@@ -31,8 +31,24 @@ pub struct FormPathSegments<'a> {
 }
 
 impl<'a> FormPath<'a> {
-    /// Read `text` as `key *( "[" [ key ] "]" )`, with at most `depth_limit` segments.
-    pub(crate) fn parse(text: &'a str, depth_limit: usize) -> Result<Self, FormErrorKind> {
+    /// Read `text` as a bracket path, `key *( "[" [ key ] "]" )`, where a key is not empty and contains neither `[` nor `]`, with at most `depth_limit` segments, the first included.
+    ///
+    /// [`FormName::path`](crate::FormName::path) reads a pair's name with the parser's depth limit; this reads any other decoded name, such as a `multipart/form-data` field's, by the same rules.
+    ///
+    /// ```
+    /// use base_web_url::{FormErrorKind, FormPath, FormPathSegment};
+    ///
+    /// let path = FormPath::parse("user[emails][]", 8)?;
+    /// assert!(path.segments().eq([FormPathSegment::Key("user"), FormPathSegment::Key("emails"), FormPathSegment::Element]));
+    /// assert_eq!(FormPath::parse("user[emails", 8), Err(FormErrorKind::InvalidPath));
+    /// assert_eq!(FormPath::parse("a[b][c]", 2), Err(FormErrorKind::DepthLimit));
+    /// # Ok::<(), FormErrorKind>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`FormErrorKind::InvalidPath`] when `text` is not a bracket path, and [`FormErrorKind::DepthLimit`] for more segments than the limit.
+    pub fn parse(text: &'a str, depth_limit: usize) -> Result<Self, FormErrorKind> {
         let (first, mut rest) = text.split_at(text.find('[').unwrap_or(text.len()));
         if !is_key(first) {
             return Err(FormErrorKind::InvalidPath);

@@ -11,7 +11,7 @@ Form content and query strings share one syntax, which the WHATWG URL Standard d
 - A name without `=`, as in `debug` in `?debug&page=2`, has no value, which is distinct from the empty value of `debug=`.
 - Decoding is strict: a `%` not followed by two hexadecimal digits, and decoded bytes that are not UTF-8, are errors, never kept as text or replaced.
 
-Errors give the offset in the input where the problem was found, and never include names or values; `Debug` output shows their lengths instead.
+Errors give the offset in the input where the problem was found, and never include names or values; `Debug` output shows their lengths instead. When input has several problems, the first in the input is reported, however the input is split.
 
 ## Reading input held in memory
 
@@ -78,7 +78,7 @@ assert_eq!(fields, [("name".to_owned(), "Ada Lovelace".to_owned()), ("role".to_o
 # Ok::<(), base_web_url::FormError>(())
 ```
 
-Each pair is reported as `Name`, any number of `Value` pieces, and `PairEnd`. The name is always complete, so an application can refuse a name it does not expect before reading the value. A value arrives in pieces, decoded, so it never needs to be held whole; a piece never ends within an escape or a UTF-8 sequence. The buffer must be able to hold `minimum_buffer_size()` bytes, enough for a whole name; the parser reports an error rather than needing more.
+Each pair is reported as `Name`, any number of `Value` pieces, and `PairEnd`. Once `parse_end` has been called, the input has ended, and bytes given to later calls are never read. The name is always complete, so an application can refuse a name it does not expect before reading the value. A value arrives in pieces, decoded, so it never needs to be held whole; a piece never ends within an escape or a UTF-8 sequence. The buffer must be able to hold `minimum_buffer_size()` bytes, enough for a whole name; the parser reports an error rather than needing more.
 
 ## Limits
 
@@ -100,4 +100,8 @@ assert_eq!(segments, [FormPathSegment::Key("items"), FormPathSegment::Element, F
 
 A path is a key followed by any number of `[key]` and `[]`, where `[]` is an element of an array whose position the application decides. Keys are not empty and contain neither `[` nor `]`; anything else, such as `[a]`, `a[b`, or `a[b]c`, is an error rather than a guess, since other readers disagree about such names. Brackets are read after decoding, so `a%5Bb%5D` is the path `a`, `b`. Paths deeper than the depth limit are errors.
 
-Mapping pairs onto application data, such as declared structures and arrays, belongs to `base-web-content`.
+`FormPath::parse` reads a name from elsewhere, such as a `multipart/form-data` field's, by the same rules.
+
+## Writing
+
+There is no form writer: to write a query or form content, encode each name and value with `encode_component`, and join them with `=` and `&`. It writes a space as `%20`, which readers decode as they decode `+`. Mapping pairs onto application data, such as declared structures and arrays, belongs to `base-web-content`.

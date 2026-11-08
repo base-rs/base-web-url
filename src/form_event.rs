@@ -26,7 +26,7 @@ pub enum FormEvent<'a> {
     Value(Cow<'a, str>),
     /// The current pair is complete.
     PairEnd,
-    /// The input has ended, after the last pair. Only [`FormParser::parse_end`](crate::FormParser::parse_end) reports it.
+    /// The input has ended, after the last pair, as [`FormParser::parse_end`](crate::FormParser::parse_end) reports. Once it is reported, every later call reports it again.
     End,
     /// The input ends before the next event: call again with more input, beginning with the bytes not yet consumed, or call [`FormParser::parse_end`](crate::FormParser::parse_end) if the input has ended.
     Incomplete,
