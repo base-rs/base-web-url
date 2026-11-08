@@ -43,7 +43,7 @@ let url = url.with_query(Some(&query)).unwrap();
 assert_eq!(url.as_str(), "https://example.com/search?q=fish%20%26%20chips");
 ```
 
-Components passed to `with_query` and `with_fragment` must already be percent-encoded; encode application values with `encode_component`, which encodes everything but unreserved characters, and decode them with `decode_component`. Form content, such as `application/x-www-form-urlencoded` queries with `+` for spaces, belongs to `base-web-content`.
+Components passed to `with_query` and `with_fragment` must already be percent-encoded; encode application values with `encode_component`, which encodes everything but unreserved characters, and decode them with `decode_component`. To read a query's names and values, with `+` for spaces as forms write them, use `form_pairs`, which the [Forms and Query Strings](forms.md) guide covers.
 
 ## Resolving links
 

@@ -1,8 +1,8 @@
 # `base-web-url`
 
-URLs, URL references, and URL paths for Rust, following RFC 3986, with percent-encoding and safe mapping to local files.
+URLs, URL references, and URL paths for Rust, following RFC 3986, with percent-encoding, safe mapping to local files, and a streaming parser for form content and query strings.
 
-A `Url` has a scheme, such as `https://example.com/docs/`; a `UrlReference` may also be relative, such as `../api?page=2`, and resolves against a page's URL following RFC 3986. A `UrlPath` keeps its percent-encoded segments, so a `/` inside a decoded value never becomes a separator, and maps to a file beneath a root directory without escaping it.
+A `Url` has a scheme, such as `https://example.com/docs/`; a `UrlReference` may also be relative, such as `../api?page=2`, and resolves against a page's URL following RFC 3986. A `UrlPath` keeps its percent-encoded segments, so a `/` inside a decoded value never becomes a separator, and maps to a file beneath a root directory without escaping it. `FormParser` reads `application/x-www-form-urlencoded` content and query strings strictly, as they arrive.
 
 ## Usage
 
@@ -21,6 +21,7 @@ See the guides:
 
 - [Getting Started](context/getting-started.md): parsing, building, and resolving URLs and references.
 - [Paths](context/paths.md): segments and components, joining and resolving, simplifying, and local files.
+- [Forms and Query Strings](context/forms.md): reading form content and query strings, whole or as they arrive, and bracket paths.
 
 ## Releases
 
