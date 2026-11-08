@@ -1,6 +1,6 @@
 # Releases
 
-## Unreleased
+## v0.2.0
 
 - Add `FormParser`, a sans-I/O parser for `application/x-www-form-urlencoded` content and query strings, following the WHATWG URL Standard with strict decoding: it reports each complete name before its value, streams values in decoded pieces, and limits size, pair count, and name and value lengths.
 - Add `form_pairs`, for form content and query strings held in memory, and `FormName::path` and `FormPath::parse`, which read bracketed names such as `user[emails][]` as segments, with a depth limit.

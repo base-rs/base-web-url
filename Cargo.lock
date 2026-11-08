@@ -164,7 +164,7 @@ checksum = "0cafbfb3e7e5ce421ad36126cde1382cf6e5c994e17ca25701bc8a94fe24650e"
 
 [[package]]
 name = "base-web-url"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "base-web-url-bake"
