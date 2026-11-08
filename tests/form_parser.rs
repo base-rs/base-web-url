@@ -296,6 +296,23 @@ fn limits_the_size_of_the_input() {
         limited_error(limits(0), b"a"),
         (FormErrorKind::SizeLimit, 0)
     );
+    // Errors are reported in the order of the input, so a malformed name within the limit fails as one.
+    assert_eq!(
+        limited_error(limits(2), b"%ZZ"),
+        (FormErrorKind::PercentEncoding, 0)
+    );
+    assert_eq!(
+        limited_error(limits(3), b"\xffaaaa"),
+        (FormErrorKind::Utf8, 0)
+    );
+    assert_eq!(
+        limited_error(limits(5), b"%ZZaaaaaaa=1"),
+        (FormErrorKind::PercentEncoding, 0)
+    );
+    assert_eq!(
+        limited_error(limits(6), b"a=1&b%C3%A9"),
+        (FormErrorKind::SizeLimit, 6)
+    );
     assert!(assert_split_invariant(limits(0), b"").unwrap().is_empty());
     // Bytes within the limit are reported before the error.
     let mut parser = FormParser::with_limits(limits(4));

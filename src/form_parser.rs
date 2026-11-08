@@ -134,17 +134,16 @@ impl FormParser {
             Some(end) => &input[..input.len().min(end - self.offset)],
             None => input,
         };
-        let end = self.end == Some(self.offset + input.len());
+        let end = self.end.is_some_and(|end| end - self.offset == input.len());
         // Bytes beyond the size limit are never consumed, so a step that needs one fails; until then, the parser reports what the bytes within the limit hold, however the input is split.
         let remaining = self.limits.size_limit - self.offset;
         let truncated = input.len() > remaining;
+        let window = &input[..input.len().min(remaining)];
         let mut consumed = 0;
-        let result = match self.step(
-            &input[..input.len().min(remaining)],
-            end && !truncated,
-            &mut consumed,
-        ) {
-            Ok(FormEvent::Incomplete) if truncated => Err((FormErrorKind::SizeLimit, remaining)),
+        let result = match self.step(window, end && !truncated, &mut consumed) {
+            Ok(FormEvent::Incomplete) if truncated => self
+                .check_truncated(&window[consumed..], consumed)
+                .and(Err((FormErrorKind::SizeLimit, remaining))),
             result => result,
         };
         match result {
@@ -158,6 +157,14 @@ impl FormParser {
                 Err(error)
             }
         }
+    }
+
+    /// Errors are reported in the order of the input, so when the size limit cuts a name short, a malformed name within the limit fails as one. A value's pieces were already decoded as they arrived.
+    fn check_truncated(&self, rest: &[u8], consumed: usize) -> Result<(), Failure> {
+        if matches!(self.state, State::Name { .. }) {
+            decode(rest, false).map_err(|(kind, index)| (kind, consumed + index))?;
+        }
+        Ok(())
     }
 
     fn step<'a>(
